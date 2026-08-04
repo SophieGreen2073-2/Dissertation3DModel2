@@ -51,7 +51,7 @@
         "Acceleration": 2.5,
         "WallDangerZone": 2,
         "ChargeTime": 3600,
-        "FOVDeg": 60.0,
+        "FOVDeg": 135.0,
         "MaxRange": 24,
         "Communications":{
             "TransmitPower": 23,
