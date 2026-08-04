@@ -1,0 +1,66 @@
+{
+    "Simulations":
+    [
+        {
+            "NumUAVs": 1,
+            "NumUGVs": 0,
+            "NumLegged": 0
+        },
+        {
+            "NumUAVs": 2,
+            "NumUGVs": 0,
+            "NumLegged": 0
+        },
+        {
+            "NumUAVs": 3,
+            "NumUGVs": 0,
+            "NumLegged": 0
+        },
+        {
+            "NumUAVs": 4,
+            "NumUGVs": 0,
+            "NumLegged": 0
+        },
+        {
+            "NumUAVs": 5,
+            "NumUGVs": 0,
+            "NumLegged": 0
+        }
+    ],
+    
+    "StartRobotIDs": 4,
+    "TimeStep": 0.1,
+
+    "RechargePoint": [0, 1],
+
+    "IsCommsModelled": 0,
+
+    "Grid":{
+        "Width": 195,
+        "Height": 55
+    },
+
+    "UAVParams":{
+        "StartPosition": [1, 1],
+        "ReleaseDelay": 10,
+        "TopSpeed": 2,
+        "DangerSpeed": 1,
+        "StartSpeed": 0,
+        "LIDARDistance": 24,
+        "BatteryLife": 540,
+        "Acceleration": 2.5,
+        "WallDangerZone": 2,
+        "ChargeTime": 3600,
+        "FOVDeg": 60.0,
+        "MaxRange": 24,
+        "Communications":{
+            "TransmitPower": 23,
+            "ReceiverSensitivity": -75,
+            "AntennaeGains": 4,
+            "Frequency": 2400,
+            "InterferenceMargin": 10,
+            "ConcreteLoss": 1
+        }
+    }
+
+}
