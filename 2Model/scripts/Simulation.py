@@ -38,36 +38,36 @@ class Simulation():
 
             self.client.step()
 
-            try:
-                # 3. Step FIRST, then inspect simulation state safely
-                while True:
-                    self.completed = True
-                    # Advance the simulation step (CRITICAL)
-                    self.client.step()
+            # try:
+            # 3. Step FIRST, then inspect simulation state safely
+            while True:
+                self.completed = True
+                # Advance the simulation step (CRITICAL)
+                self.client.step()
 
-                    # Check if simulation was stopped manually from GUI or script
-                    if self.sim.getSimulationState() == self.sim.simulation_stopped:
-                        break
+                # Check if simulation was stopped manually from GUI or script
+                if self.sim.getSimulationState() == self.sim.simulation_stopped:
+                    break
 
-                    self.sim_time = self.sim.getSimulationTime()
+                self.sim_time = self.sim.getSimulationTime()
 
-                    for uav in self.UAVs:
-                        # uav.scan()
-                        if not uav.current_path:
-                            uav.yamauchi_move()
-                        else:
-                            uav.step_robot()
-                        self.completed &= uav.completed
+                for uav in self.UAVs:
+                    # uav.scan()
+                    if not uav.current_path:
+                        uav.yamauchi_move()
+                    else:
+                        uav.step_robot()
+                    self.completed &= uav.completed
 
-                    if self.completed:
-                        break
+                if self.completed:
+                    break
 
-            except Exception as e:
-                print(f"Simulation run interrupted: {e}")
+            # except Exception as e:
+            #     print(f"Simulation run interrupted: {e}")
 
-            finally:
+            # finally:
                 # 4. Clean up between runs
-                self.sim.stopSimulation()
+            self.sim.stopSimulation()
                     
 
             # while(True):
@@ -144,6 +144,7 @@ class Simulation():
                         self.UAVParams["ChargeTime"], len(self.UAVParams) + self.startRobotIDs,
                         alias, drone_base, drone_target, [], self.Grid["Width"],
                         self.Grid["Height"], self.sim, self.UAVParams["FOVDeg"],
-                        self.UAVParams["MaxRange"], self.UAVParams["ScanFrequency"])
+                        self.UAVParams["MaxRange"], self.UAVParams["ScanFrequency"],
+                        self.UAVParams["MinRange"])
 
             self.UAVs.append(uav)

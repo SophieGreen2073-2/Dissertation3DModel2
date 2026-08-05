@@ -33,7 +33,8 @@
         "ChargeTime": 3600,
         "FOVDeg": 135.0,
         "MaxRange": 24,
-        "ScanFrequency": 100,
+        "MinRange": 0.05,
+        "ScanFrequency": 15,
         "Communications":{
             "TransmitPower": 23,
             "ReceiverSensitivity": -75,
