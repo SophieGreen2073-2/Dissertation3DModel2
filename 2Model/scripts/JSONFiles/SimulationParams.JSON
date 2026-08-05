@@ -5,26 +5,6 @@
             "NumUAVs": 1,
             "NumUGVs": 0,
             "NumLegged": 0
-        },
-        {
-            "NumUAVs": 2,
-            "NumUGVs": 0,
-            "NumLegged": 0
-        },
-        {
-            "NumUAVs": 3,
-            "NumUGVs": 0,
-            "NumLegged": 0
-        },
-        {
-            "NumUAVs": 4,
-            "NumUGVs": 0,
-            "NumLegged": 0
-        },
-        {
-            "NumUAVs": 5,
-            "NumUGVs": 0,
-            "NumLegged": 0
         }
     ],
     
@@ -53,6 +33,7 @@
         "ChargeTime": 3600,
         "FOVDeg": 135.0,
         "MaxRange": 24,
+        "ScanFrequency": 100,
         "Communications":{
             "TransmitPower": 23,
             "ReceiverSensitivity": -75,

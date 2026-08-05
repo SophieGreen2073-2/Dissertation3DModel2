@@ -1,13 +1,14 @@
 import numpy as np
 import struct
 from collections import deque
+import math
 
 class UAVModel():
     def __init__(self, x, y, z, top_speed, danger_speed, start_speed,
                  acceleration, battery_life, charge_time, robot_id,
                  alias, drone_base, drone_target, current_path,
                  grid_width, grid_height, sim, fov_deg, max_range,
-                    resolution = 0.2):
+                 scan_frequency,   resolution = 0.2):
         print("Create new UAV")
 
         self.sim = sim
@@ -16,7 +17,7 @@ class UAVModel():
         self.completed = False
 
         # Robot Position
-        self.pos = (x, y)
+        # self.pos = (x, y)
         self.directions = {'north': [0, -1], 'south': [0, 1], 'east': [1, 0], 'west': [-1, 0], 'stay': [0,0], 'north_east': [1, -1], 'south_east': [1, 1], 'south_west': [-1, 1], 'north_west': [-1, -1]}
 
         # Robot Velocity and Acceleration
@@ -44,28 +45,65 @@ class UAVModel():
         
         # Camera model
         self.sensor = UAVSensor(fov_deg, max_range, self.cam_handle)
+        self.scan_frequency = scan_frequency
+        self.step_count = 0
 
     # Move robot into next position
     def step_robot(self):
         next_wp = self.current_path[0]
         target_wx, target_wy = self.occupancy_grid.grid_to_world(next_wp[0], next_wp[1])
+
+        # Increase number of steps
+        self.step_count += 1
         
-        # Send target to next waypoint
-        self.sim.setObjectPosition(self.drone_target, -1, [target_wx, target_wy, 2.5])
+        # Get grid position and orientation of drone
+        curr_pos = self.sim.getObjectPosition(self.drone_base, -1)
+        curr_orient = self.sim.getObjectOrientation(self.drone_base, -1)
 
-        grid_pos = self.get_grid_pos()
+        # Get change in orientation 
+        # step_dir = (next_wp[0] - grid_pos[0], next_wp[1] - grid_pos[1])
+        step_dir = (target_wx - curr_pos[0], target_wy - curr_pos[1])
+        dist_to_target = math.hypot(step_dir[0], step_dir[1])
 
-        # Get grid pos
-        # grid_pos = self.occupancy_grid.world_to_grid(self.pos[0], self.pos[1])
+        target_angle = math.atan2(step_dir[1], step_dir[0])
+        angle_diff = math.atan2(math.sin(target_angle - curr_orient[2]), math.cos(target_angle - curr_orient[2]))
+
+        # Alter angle if difference is a big enough angle
+        if dist_to_target > 0.05:
+            # Rotate in place
+            if abs(angle_diff) > 0.1:
+                max_turn_step = 50
+                step = max(-max_turn_step, min(max_turn_step, angle_diff))
+                next_yaw_target = curr_orient[2] + step
+
+                self.sim.setObjectPosition(self.drone_target, -1, [curr_pos[0], curr_pos[1], 2.5])
+                self.sim.setObjectOrientation(self.drone_target, -1, [0.0, 0.0, next_yaw_target])
+
+                if self.step_count % self.scan_frequency == 0:
+                    self.sensor.get_lidar_points(self.sim)
+                    self.occupancy_grid.update_belief(self.sensor.wall_points, self.sim, self.drone_base)
+                
+                return
+
+            max_forward_step = 0.4
+            forward_step_dist = min(dist_to_target, max_forward_step)
+
+            step_x = curr_pos[0] + (step_dir[0] / dist_to_target) * forward_step_dist
+            step_y = curr_pos[1] + (step_dir[1] / dist_to_target) * forward_step_dist
+            
+            self.sim.setObjectPosition(self.drone_target, -1, [step_x, step_y, 2.5])
+            self.sim.setObjectOrientation(self.drone_target, -1, [0.0, 0.0, target_angle])
 
         # Check if drone reached waypoint
+        grid_pos = self.occupancy_grid.world_to_grid(curr_pos[0], curr_pos[1])
         distance = ((grid_pos[0] - next_wp[0])**2 + (grid_pos[1] - next_wp[1])**2)**0.5
 
-        if distance < 0.2:
+        if distance < 0.2 :
             self.current_path.pop(0)
 
-        self.sensor.get_lidar_points(self.sim)
-        self.occupancy_grid.update_belief(self.sensor.wall_points, self.sim, self.drone_base)
+        if self.step_count % self.scan_frequency == 0:
+            self.sensor.get_lidar_points(self.sim)
+            self.occupancy_grid.update_belief(self.sensor.wall_points, self.sim, self.drone_base)
 
 
     def scan(self):
@@ -98,23 +136,33 @@ class UAVModel():
         # Go through each position until there is an unknown space (frontier)
         while len(queue) != 0:
             cc, cr = queue.popleft()
+            grid_val = wall_belief[cr, cc]
 
-            if 0.4 < wall_belief[cr, cc] < 0.6:
+            if 0.4 < grid_val < 0.6 and (cc, cr) != current_grid_pos:
                 dest_location = (cc, cr)
                 break
 
-            for dir in directions:
-                dr = self.directions[dir][1]
-                dc = self.directions[dir][0]
-                grid_val = wall_belief[cr + dr, cc + dc]
+            if grid_val < 0.4 or (cc, cr) == current_grid_pos:
+                for dir in directions:
+                    dr = self.directions[dir][1]
+                    dc = self.directions[dir][0]
 
-                if 0 <= cc + dc < self.occupancy_grid.width and 0 <= cr + dr < self.occupancy_grid.height and not visited[cr + dr][cc + dc] and grid_val < 0.7:
-                    visited[cr + dr][cc + dc] = True
-                    queue.append((cc + dc, cr + dr))
-                    parent[(cc + dc, cr + dr)] = (cc, cr)
+                    if 0 <= cc + dc < self.occupancy_grid.width and 0 <= cr + dr < self.occupancy_grid.height:
+                        if not visited[cr + dr][cc + dc]:
+                            neighbour_val = wall_belief[cr + dr, cc + dc]
+                            if neighbour_val < 0.6:
+                                visited[cr + dr][cc + dc] + True
+                                queue.append((cc + dc, cr + dr))
+                                parent[(cc + dc, cr + dr)] = (cc, cr)
+                                 
+                        # grid_val = wall_belief[cr + dr, cc + dc]
+                        # if visited[cr + dr][cc + dc] and grid_val < 0.7:
+                        #     visited[cr + dr][cc + dc] = True
+                        #     queue.append((cc + dc, cr + dr))
+                        #     parent[(cc + dc, cr + dr)] = (cc, cr)
         
         # Change this to do all steps towards frontier instead of just one to reduce calculation
-        if len(dest_location) != 0:
+        if dest_location:
             # Find the next step the UAV should take to get to the free space selected
             next_step = dest_location
             path_nodes = []
@@ -123,8 +171,8 @@ class UAVModel():
                 next_step = parent[next_step]
 
             path_nodes.reverse()
-            
             self.current_path = path_nodes
+            self.moved = True
         else:
             self.moved = False
 
@@ -217,7 +265,7 @@ class OccupancyBeliefGrid():
 
     # Get grid of probabilities that the space has a wall in it
     def get_probability_grid(self):
-        return 1.0 / (1.0 + np.exp(self.belief_grid))
+        return 1.0 - (1.0 / (1.0 + np.exp(self.belief_grid)))
 
 
 class UAVSensor():

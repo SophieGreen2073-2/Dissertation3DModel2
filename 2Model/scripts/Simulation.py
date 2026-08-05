@@ -144,6 +144,6 @@ class Simulation():
                         self.UAVParams["ChargeTime"], len(self.UAVParams) + self.startRobotIDs,
                         alias, drone_base, drone_target, [], self.Grid["Width"],
                         self.Grid["Height"], self.sim, self.UAVParams["FOVDeg"],
-                        self.UAVParams["MaxRange"])
+                        self.UAVParams["MaxRange"], self.UAVParams["ScanFrequency"])
 
             self.UAVs.append(uav)
