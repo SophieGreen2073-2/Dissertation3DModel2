@@ -53,8 +53,10 @@ class UAVModel():
         # Send target to next waypoint
         self.sim.setObjectPosition(self.drone_target, -1, [target_wx, target_wy, 2.5])
 
+        grid_pos = self.get_grid_pos()
+
         # Get grid pos
-        grid_pos = self.occupancy_grid.world_to_grid(self.pos[0], self.pos[1])
+        # grid_pos = self.occupancy_grid.world_to_grid(self.pos[0], self.pos[1])
 
         # Check if drone reached waypoint
         distance = ((grid_pos[0] - next_wp[0])**2 + (grid_pos[1] - next_wp[1])**2)**0.5
@@ -106,7 +108,7 @@ class UAVModel():
                 dc = self.directions[dir][0]
                 grid_val = wall_belief[cr + dr, cc + dc]
 
-                if 0 <= cc + dc < self.occupancy_grid.width and 0 <= cr + dr < self.occupancy_grid.height and not visited[cr + dr][cc + dc] and grid_val < 0.5:
+                if 0 <= cc + dc < self.occupancy_grid.width and 0 <= cr + dr < self.occupancy_grid.height and not visited[cr + dr][cc + dc] and grid_val < 0.7:
                     visited[cr + dr][cc + dc] = True
                     queue.append((cc + dc, cr + dr))
                     parent[(cc + dc, cr + dr)] = (cc, cr)
