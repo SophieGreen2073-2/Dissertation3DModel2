@@ -145,6 +145,6 @@ class Simulation():
                         alias, drone_base, drone_target, [], self.Grid["Width"],
                         self.Grid["Height"], self.sim, self.UAVParams["FOVDeg"],
                         self.UAVParams["MaxRange"], self.UAVParams["ScanFrequency"],
-                        self.UAVParams["MinRange"])
+                        self.UAVParams["MinRange"], self.UAVParams["WallDangerZone"])
 
             self.UAVs.append(uav)
