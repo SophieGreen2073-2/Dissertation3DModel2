@@ -114,6 +114,14 @@ class UAVModel():
             self.steps_completed = True
             return
 
+        # Calculate distance to final target for arrival braking
+        final_wp = self.steps_queue[-1] if len(self.steps_queue) > 0 else None
+        if final_wp:
+            final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
+            dist_to_final = math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1])
+        else:
+            dist_to_final = float('inf')
+
         # Get change in orientation 
         step_dir = (target_wx - curr_pos[0], target_wy - curr_pos[1])
         dist_to_target = math.hypot(step_dir[0], step_dir[1])
@@ -123,10 +131,10 @@ class UAVModel():
 
         # Alter angle if difference is a big enough angle
         if dist_to_target > 0.05:
-            max_turn_rate = 0.05
-            p_gain = 0.5
+            max_turn_rate = 0.03
+            p_gain = 0.3
 
-            if abs(angle_diff) < 0.3:  # Within ~17 degrees
+            if abs(angle_diff) < 0.8:  # Within ~17 degrees
                 # Proportional slowdown (shrinks as angle approaches 0)
                 dynamic_turn_rate = max_turn_rate * (abs(angle_diff) / 0.3)
             else:
@@ -140,30 +148,41 @@ class UAVModel():
                 self.sim.setObjectOrientation(self.drone_target, -1, [0.0, 0.0, commanded_yaw])
             else:
                 # Slow speed if angle not aligned with target
-                alignment = max(0.05, math.cos(angle_diff))
-                step_dist = min(dist_to_target, 0.25 * alignment)
+                alignment = max(0.03, math.cos(angle_diff))
+
+                # Check if close to end of path
+                arrival_braking = min(1.0, dist_to_final / 0.8)
+                step_dist = min(dist_to_target, 0.25 * alignment * arrival_braking)
     
                 step_x = curr_pos[0] + (step_dir[0] / dist_to_target) * step_dist
                 step_y = curr_pos[1] + (step_dir[1] / dist_to_target) * step_dist
 
-                self.sim.setObjectPosition(self.drone_target, -1, [step_x, step_y, 2.5])
-                self.sim.setObjectOrientation(self.drone_target, -1, [0.0, 0.0, commanded_yaw])
-                           
-        # if self.is_scanning_in_place:
-        #     if abs(angle_diff) < 0.05:
-        #         self.current_path = []
-        # else:
-        #     final_wp = self.current_path[-1]
-        #     final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
-        #     if math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1]) < 0.25:
-        #         self.current_path = []
+                # Spin in place until close to correct angle
+                if abs(angle_diff) >= 0.01:
+                    self.sim.setObjectPosition(self.drone_target, -1, [curr_pos[0], curr_pos[1], 2.5])
+                    self.sim.setObjectOrientation(self.drone_target, -1, [0.0, 0.0, commanded_yaw])
+                else:
+                    self.sim.setObjectPosition(self.drone_target, -1, [step_x, step_y, 2.5])
+                    self.sim.setObjectOrientation(self.drone_target, -1, [0.0, 0.0, commanded_yaw])
 
-        if len(self.steps_queue) > 0:
+                           
+        if self.is_scanning_in_place:
+            if abs(angle_diff) < 0.01:
+                self.steps_queue.clear()
+                self.steps_completed = True
+        else:
             final_wp = self.steps_queue[-1]
             final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
             if math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1]) < 0.25:
                 self.steps_queue.clear()
                 self.steps_completed = True
+
+        # if len(self.steps_queue) > 0:
+        #     final_wp = self.steps_queue[-1]
+        #     final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
+        #     if math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1]) < 0.25:
+        #         self.steps_queue.clear()
+        #         self.steps_completed = True
 
         if self.step_count % self.scan_frequency == 0:
             self.sensor.get_lidar_points(self.sim)
@@ -204,23 +223,30 @@ class UAVModel():
             cc, cr = queue.popleft()
             grid_val = wall_belief[cr, cc]
 
+            # Get current drone and target position
             current_world_pos = self.sim.getObjectPosition(self.drone_base, -1)
             target_world_position = self.occupancy_grid.grid_to_world(cc, cr)
 
+            # Check direction and distance to target
             step_dir = (target_world_position[0] - current_world_pos[0], target_world_position[1] - current_world_pos[1])
             dist_to_target = math.hypot(step_dir[0], step_dir[1])
 
+            # Check if the grid value is unscanned, not the current position, and within the scan area and not the same as the previous target
             if 0.4 < grid_val < 0.6 and (cc, cr) != current_grid_pos and dist_to_target > self.min_range and self.prev_end_target != (cc, cr):
                 dest_location = (cc, cr)
                 self.prev_end_target = dest_location
                 break
 
+            # Check if grid value is current position or free space
             if grid_val < 0.6 or (cc, cr) == current_grid_pos:
+                # Check each direction
                 for dir in directions:
                     dr = self.directions[dir][1]
                     dc = self.directions[dir][0]
 
+                    # Check if location within grid bounds
                     if 0 <= cc + dc < self.occupancy_grid.width and 0 <= cr + dr < self.occupancy_grid.height:
+                        # Check if location already checked
                         if not visited[cr + dr][cc + dc]:
                             neighbour_val = wall_belief[cr + dr, cc + dc]
 
@@ -229,6 +255,7 @@ class UAVModel():
                                 if wall_belief[cr, cc + dc] >= 0.6 or wall_belief[cr + dr, cc] >= 0.6:
                                     continue
 
+                            # Check if neighbour is currently unscanned/free position
                             if neighbour_val < 0.6:
                                 visited[cr + dr][cc + dc] = True
                                 queue.append((cc + dc, cr + dr))
@@ -243,11 +270,13 @@ class UAVModel():
                 path_nodes.append(next_step)
                 next_step = parent[next_step]
 
+            # Create path to follow
             path_nodes.reverse()
             pruned = self.prune_path(path_nodes)
-            self.current_path = pruned if pruned else path_nodes
+            self.steps_queue = pruned if pruned else path_nodes
             self.moved = True
 
+            # If target within scan zone then scan in place
             if dist_to_target < self.max_range:
                 self.is_scanning_in_place = self.occupancy_grid.is_line_of_sight(current_grid_pos[0], current_grid_pos[1], self.current_path[-1][0], self.current_path[-1][1])
             else:
@@ -379,27 +408,42 @@ class UAVModel():
 
         wall_belief = self.occupancy_grid.get_probability_grid()
 
-        # Check if the current position of the UAV is unscanned
-        if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
-            self.occupancy_grid.belief_grid[current_grid_pos[1], current_grid_pos[0]] = -5
-            self.scan()
-            return
+        # # Check if the current position of the UAV is unscanned
+        # if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
+        #     self.occupancy_grid.belief_grid[current_grid_pos[1], current_grid_pos[0]] = -5
+        #     self.scan()
+        #     return
         
         # Go through each position until frontier found
         while len(queue) != 0 and len(frontiers_found) <= self.frontier_count:
             cc, cr = queue.popleft()
+            self.prev_end_target = (cc, cr)
 
-            # If p has not been visited
+            current_world_pos = self.sim.getObjectPosition(self.drone_base, -1)
+
+            # If p has not been visited, or likely a wall
             if (cc, cr) in MapCloseList or wall_belief[cr, cc] > 0.7:
                 continue
             
             if (cc, cr) != current_grid_pos:
-                # If p is a frontier point
-                is_frontier = self.check_frontier(directions, cc, cr)
+                # Get current position and target position
+                target_world_position = self.occupancy_grid.grid_to_world(cc, cr)
+                
+                # Check direction and distance to target
+                step_dir = (target_world_position[0] - current_world_pos[0], target_world_position[1] - current_world_pos[1])
+                dist_to_target = math.hypot(step_dir[0], step_dir[1])
 
-                # If the point is a frontier point add to the list of frontiers
-                if is_frontier:
-                    frontiers_found.append((cc, cr))
+                if dist_to_target > self.min_range:
+                    if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
+                        frontiers_found.append((cc, cr))
+                        break
+
+                    # If p is a frontier point
+                    is_frontier = self.check_frontier(directions, cc, cr)
+
+                    # If the point is a frontier point add to the list of frontiers
+                    if is_frontier:
+                        frontiers_found.append((cc, cr))
 
             # Add adjacent points to the check queue
             for dir in directions:
@@ -433,8 +477,22 @@ class UAVModel():
             self.completed = True
             return
 
-        # Generate path to target
-        self.do_a_star(current_grid_pos, dest_location, True)
+        # Get current position and target position
+        current_world_pos = self.sim.getObjectPosition(self.drone_base, -1)
+        target_world_position = self.occupancy_grid.grid_to_world(dest_location[0], dest_location[1])
+        
+        # Check direction and distance to target
+        step_dir = (target_world_position[0] - current_world_pos[0], target_world_position[1] - current_world_pos[1])
+        dist_to_target = math.hypot(step_dir[0], step_dir[1])
+
+        # If the target is within the max scan range then scan in place
+        if dist_to_target < self.max_range * 0.98:
+            self.is_scanning_in_place = True
+            self.steps_queue.append(dest_location)
+        else:
+            # Generate path to target
+            self.do_a_star(current_grid_pos, dest_location, True)
+            self.is_scanning_in_place = False
 
         if len(self.steps_queue) != 0:
             self.steps_completed = False
@@ -834,13 +892,13 @@ class OccupancyBeliefGrid():
     # Convert world coordinates into grid belief position
     def world_to_grid(self, wx, wy):
         gx = np.floor((wx - self.x_min) / self.resolution).astype(int)
-        gy = np.floor((wy - self.y_min)/ self.resolution).astype(int)
+        gy = np.floor((self.y_max - wy)/ self.resolution).astype(int)
         return gx, gy
 
     # Convert grid coordinates into world coordinates
     def grid_to_world(self, gx, gy):
         wx = self.x_min + (gx + 0.5) * self.resolution
-        wy = self.y_min + (gy + 0.5) * self.resolution
+        wy = self.y_max - (gy + 0.5) * self.resolution
         return wx, wy
 
     # Update the belief grid based on the scanned wall_points
@@ -939,32 +997,6 @@ class OccupancyBeliefGrid():
                 curr_y += dir_y
 
         return True
-
-    # # Mark space between drone and wall as clear
-    # # Distinguish between unscanned and unoccupied space 
-    # def clear_space(self, x_start, y_start, x_end, y_end):
-    #     dx = abs(x_end - x_start)
-    #     dy = abs(y_end - y_start)
-    #     dir_x = 1 if x_start < x_end else -1
-    #     dir_y = 1 if y_start < y_end else -1
-    #     err = dx - dy
-
-    #     curr_x, curr_y = x_start, y_start
-    #     # max_steps = dx + dy + 2
-    #     # steps = 0
-
-    #     while (curr_x != x_end or curr_y != y_end): #and steps < max_steps:
-    #         # steps += 1
-    #         if 0 <= curr_x < self.width and 0 <= curr_y < self.height:
-    #             self.belief_grid[curr_y, curr_x] += self.l_free
-
-    #         e2 = 2 * err
-    #         if e2 > -dy:
-    #             err -= dy
-    #             curr_x += dir_x
-    #         if e2 < dx:
-    #             err += dx
-    #             curr_y += dir_y
 
     # Get grid of probabilities that the space has a wall in it
     def get_probability_grid(self):

@@ -39,10 +39,8 @@ class Simulation():
             self.client.step()
 
             # try:
-            # 3. Step FIRST, then inspect simulation state safely
             while True:
                 self.completed = True
-                # Advance the simulation step (CRITICAL)
                 self.client.step()
 
                 # Check if simulation was stopped manually from GUI or script
@@ -53,8 +51,8 @@ class Simulation():
 
                 for uav in self.UAVs:
                     # uav.scan()
-                    if not uav.current_path:
-                        uav.yamauchi_move()
+                    if not uav.steps_queue:
+                        uav.yamauchi_move_utility_function()
                     else:
                         uav.step_robot()
                     self.completed &= uav.completed
