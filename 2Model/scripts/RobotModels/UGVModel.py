@@ -711,6 +711,7 @@ class UGVModel():
         
         return False
 
+
 class Battery():
     def __init__(self, battery_params):
         self.life = battery_params["Life"]
@@ -732,6 +733,7 @@ class Sensors():
 
     def get_points(self):
         return
+
 
 class ForwardLiDAR():
     def __init__(self, LiDAR_params):
