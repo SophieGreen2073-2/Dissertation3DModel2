@@ -2,8 +2,8 @@
     "Simulations":
     [
         {
-            "NumUAVs": 1,
-            "NumUGVs": 0,
+            "NumUAVs": 0,
+            "NumUGVs": 1,
             "NumLegged": 0
         }
     ],
@@ -17,7 +17,44 @@
 
     "Grid":{
         "Width": 195,
-        "Height": 55
+        "Height": 55,
+        "Resolution": 0.2
+    },
+
+    "UGVParams":{
+        "ReleaseDelay": 10,
+        "WallDangerZone": 2,
+        "Speed":{
+            "Top": 3,
+            "Danger": 1,
+            "Start": 0,
+            "Acceleration": 2.5
+        },
+        "Sensors":{
+            "ScanFrequency": 15,
+            "LiDAR":{
+                "MaxRange": 24,
+                "MinRange": 0.8
+            },
+            "VisionSensor":{
+                "MinRange": 0.8,
+                "MaxRange": 10,
+                "FovDegrees": 90
+            }
+        },
+        "Battery":{
+            "Life": 2400,
+            "ChargeTime": 3600
+        },
+        "Communications":{
+            "TransmitPower": 23,
+            "ReceiverSensitivity": -75,
+            "AntennaeGains": 4,
+            "Frequency": 2400,
+            "InterferenceMargin": 10,
+            "ConcreteLoss": 1
+        }
+
     },
 
     "UAVParams":{

@@ -5,6 +5,7 @@ import os
 import json
 from Record import RecordRedundancy, RecordTime
 from RobotModels.UAVModel import UAVModel
+from RobotModels.UGVModel import UGVModel
 from AreaModel import AreaModel
 
 class Simulation():
@@ -23,7 +24,7 @@ class Simulation():
             self.sim.startSimulation()
 
             self.num_uavs = run["NumUAVs"]
-            num_ugvs = run["NumUGVs"]
+            self.num_ugvs = run["NumUGVs"]
             num_legged = run["NumLegged"]
 
             # Get walls within the area
@@ -31,6 +32,9 @@ class Simulation():
 
             # Create list of active UAVs
             self.CreateQuadcopterList()
+
+            # Create list of active UGVs
+            self.CreateUGVList()
 
             # self.time_elapsed = 0
             record_time = RecordTime()
@@ -100,6 +104,7 @@ class Simulation():
             self.recharge_point = d["RechargePoint"]
             self.is_comms_modelled = d["IsCommsModelled"] == 1
             self.UAVParams = d["UAVParams"]
+            self.UGVParams = d["UGVParams"]
             self.Grid = d["Grid"]
 
 
@@ -146,3 +151,33 @@ class Simulation():
                         self.UAVParams["MinRange"], self.UAVParams["WallDangerZone"])
 
             self.UAVs.append(uav)
+
+
+    # Create the list of UAVs in the area
+    def CreateUGVList(self):
+        self.UAVs = []
+
+        # Loop through each quadcopter
+        for index in range(self.num_ugvs):
+            robot_handle = None
+            left_motor = None
+            right_motor = None
+
+            if self.num_uavs == 1:
+                robot_handle = self.sim.getObject('/PioneerP3DX')
+                left_motor = self.sim.getObject('/PioneerP3DX/leftMotor')
+                right_motor = self.sim.getObject('/PioneerP3DX/rightMotor')
+            else:
+                robot_handle = self.sim.getObject(f'/PioneerP3DX[{index}]')
+                left_motor = self.sim.getObject(f'/PioneerP3DX[{index}]/leftMotor')
+                right_motor = self.sim.getObject(f'/PioneerP3DX[{index}]/rightMotor')
+
+            pos = self.sim.getObjectPosition(robot_handle, -1)
+            # alias = self.sim.getObjectAlias(drone_base)
+
+            ugv = UGVModel(robot_handle, left_motor, right_motor, self.sim,
+                           self.UGVParams["Speed"], self.UGVParams["Sensors"],
+                           self.UGVParams["Battery"], self.UGVParams["WallDangerZone"],
+                           self.Grid["Height"], self.Grid["Width"], self.Grid["Resolution"])
+
+            self.UAVs.append(ugv)
