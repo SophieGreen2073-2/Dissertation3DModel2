@@ -147,8 +147,8 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
                       vision_cam_wall_points, robot_pos, robot_orient):
         robot_x, robot_y, robot_yaw = robot_pos[0], robot_pos[1], robot_orient[2]
         
-        uav_col, uav_row = self.world_to_grid(robot_x, robot_y)
-        self.belief_grid[uav_row, uav_col] = -5 
+        # robot_col, robot_row = self.world_to_grid(robot_x, robot_y)
+        self.belief_grid[robot_y, robot_x] = -5 
 
         prob_grid = self.get_probability_grid()
 
@@ -162,7 +162,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         np.clip(self.belief_grid, self.l_min, self.l_max, out=self.belief_grid)
 
     def update_lidar_belief(self, sim, robot_handle, wall_points):
-        valid_walls = self.get_wall_points(wall_points, sim, robot_handle)
+        valid_walls = self.get_wall_points(wall_points)
 
         for (r, c) in valid_walls:
             self.belief_grid[r, c] += self.l_occ_lidar
@@ -174,7 +174,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         angle_end = yaw + half_fov
         curr_angle = angle_start
 
-        valid_walls = self.get_wall_points(wall_points, sim, robot_handle)
+        valid_walls = self.get_wall_points(wall_points)
 
         angular_resolution = math.radians(1.0)
         step_size = self.resolution * 0.5

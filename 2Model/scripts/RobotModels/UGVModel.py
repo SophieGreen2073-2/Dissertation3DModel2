@@ -84,7 +84,7 @@ class UGVModel():
 
 
     # Update robot target and speed
-    def step_target(self):
+    def step_robot(self):
         curr_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
 
@@ -733,10 +733,19 @@ class Sensors():
 
 
     def get_points(self, sim):
+        all_points = []
+
         # Get each of the wall points scanned by the camera sensors
         for cam in self.slam_sensors:
             cam.get_lidar_points(sim)
-            self.vision_wall_points.append(cam.wall_points)
+
+            if cam.wall_points is not None and len(cam.wall_points) > 0:
+                all_points.append(cam.wall_points)
+
+        if all_points:
+            self.vision_wall_points = np.vstack(all_points)
+        else:
+            self.vision_wall_points = np.array([])
 
         # Get the points directly ahead of the forward lidar (accurate sensing)
         self.forward_lidar.get_lidar_point(sim)
