@@ -137,7 +137,7 @@ class OccupancyBeliefGrid():
 
 class UGVOccupancyGrid(OccupancyBeliefGrid):
     def __init__(self, resolution, grid_width, grid_height):
-        OccupancyBeliefGrid.__init__(resolution, grid_width, grid_height)
+        OccupancyBeliefGrid.__init__(self, resolution, grid_width, grid_height)
 
         self.l_occ_lidar = 1.2   # Increase belief when wall is detected by forward lidar
         self.l_occ_vision = 0.7   # Increase belief when wall is detected by 360 degree vision cams 

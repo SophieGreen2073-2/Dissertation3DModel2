@@ -53,13 +53,13 @@ class Simulation():
 
                 self.sim_time = self.sim.getSimulationTime()
 
-                for uav in self.UAVs:
+                for ugv in self.UGVs:
                     # uav.scan()
-                    if not uav.steps_queue:
-                        uav.yamauchi_move_utility_function()
+                    if not ugv.steps_queue:
+                        ugv.yamauchi_move_utility_function()
                     else:
-                        uav.step_robot()
-                    self.completed &= uav.completed
+                        ugv.step_robot()
+                    self.completed &= ugv.completed
 
                 if self.completed:
                     break
@@ -155,7 +155,7 @@ class Simulation():
 
     # Create the list of UAVs in the area
     def CreateUGVList(self):
-        self.UAVs = []
+        self.UGVs = []
 
         # Loop through each quadcopter
         for index in range(self.num_ugvs):
@@ -180,4 +180,4 @@ class Simulation():
                            self.UGVParams["Battery"], self.UGVParams["WallDangerZone"],
                            self.Grid["Height"], self.Grid["Width"], self.Grid["Resolution"])
 
-            self.UAVs.append(ugv)
+            self.UGVs.append(ugv)

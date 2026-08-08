@@ -24,9 +24,9 @@ class UGVModel():
         self.right_motor = right_motor
 
         # Robot velocities
-        self.top_speed = speed_params["TopSpeed"]
-        self.danger_speed = speed_params["DangerSpeed"]
-        self.start_speed = speed_params["StartSpeed"]
+        self.top_speed = speed_params["Top"]
+        self.danger_speed = speed_params["Danger"]
+        self.start_speed = speed_params["Start"]
         self.acceleration = speed_params["Acceleration"]
         self.steering_gain = 2.5
 
@@ -37,12 +37,12 @@ class UGVModel():
         self.battery = Battery(battery_params)
 
         # Camera models
-        self.sensors = Sensors(sensor_params)
+        self.sensors = Sensors(sensor_params, self.robot_handle, self.sim)
         self.max_vision_range = sensor_params["VisionSensor"]["MaxRange"]
         self.min_vision_range = sensor_params["VisionSensor"]["MinRange"]
 
         # Occupancy grid
-        self.occupancy_grid = UGVOccupancyGrid(resolution, grid_height, grid_width)
+        self.occupancy_grid = UGVOccupancyGrid(resolution, grid_width, grid_height)
 
         # Utility function
         self.util_cost_weight = 1
@@ -719,36 +719,120 @@ class Battery():
 
 
 class Sensors():
-    def __init__(self, sensor_params):
+    def __init__(self, sensor_params, robot_handle, sim):
         # Scan frequency
         self.scan_frequency = sensor_params["ScanFrequency"]
 
         # Forward lidar
-        self.forward_lidar = ForwardLiDAR(sensor_params["LiDAR"])
+        self.forward_lidar = ForwardLiDAR(sensor_params["LiDAR"], robot_handle, sim)
 
         # 360 SLAM
         self.slam_sensors = []
-        for _ in range(4): self.slam_sensors.append(ForwardLiDAR(sensor_params["VisionSensor"]))
+        for i in range(4): self.slam_sensors.append(VisionSensor(sensor_params["VisionSensor"], robot_handle, i, sim))
         self.vision_wall_points = []
 
-    def get_points(self):
+
+    def get_points(self, sim):
+        # Get each of the wall points scanned by the camera sensors
+        for cam in self.slam_sensors:
+            cam.get_lidar_points(sim)
+            self.vision_wall_points.append(cam.wall_points)
+
+        # Get the points directly ahead of the forward lidar (accurate sensing)
+        self.forward_lidar.get_lidar_point(sim)
+
         return
 
 
 class ForwardLiDAR():
-    def __init__(self, LiDAR_params):
+    def __init__(self, LiDAR_params, robot_handle, sim):
         # LiDAR range
         self.min_range = LiDAR_params["MinRange"]
         self.max_range = LiDAR_params["MaxRange"]
 
+        # Camera handle
+        self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor')
+
+        self.wall_points = []
+
+    def get_lidar_point(self, sim):
+        res, dist, detected_point, obj_handle, normal_vector = sim.checkProximitySensor(self.cam_handle, sim.handle_all)
+
+        if res > 0:
+            sensor_matrix = sim.getObjectMatrix(self.cam_handle, -1)
+            self.wall_points.append(sim.multiplyVector(sensor_matrix, detected_point))
+            return
+
+        self.wall_points = []
+            
 
 class VisionSensor():
-    def __init__(self, vision_params):
+    def __init__(self, vision_params, robot_handle, camera_id, sim):
         # Vision range
         self.min_range = vision_params["MinRange"]
         self.max_range = vision_params["MaxRange"]
 
         # FoV
         self.fov = vision_params["FovDegrees"]
+
+        # Camera name
+        self.cam_handle = sim.getObject(f'/PioneerP3DX/visionSensor[{camera_id}]')
+
+    # Get LiDAR point cloud from CopelliaSim
+    def get_lidar_points(self, sim):
+        # Get raw depth matrix (1 = metres)
+        depth_bytes, resolution = sim.getVisionSensorDepth(self.cam_handle, 1)
+
+        if not depth_bytes or len(depth_bytes) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        width, height = resolution[0], resolution[1]
+        depth_map = np.frombuffer(depth_bytes, dtype=np.float32).reshape(height, width)
+
+        # Camera model
+        fov_rad = np.radians(self.fov)
+        fx = width / (2.0 * np.tan(fov_rad / 2.0))
+        fy = fx
+        cx = width / 2.0
+        cy = height / 2.0
+
+        # Create pixel coordinate grid
+        u, v = np.meshgrid(np.arange(width), np.arange(height))
+
+        # Filter out background clipping plane and empty depth points
+        valid_mask = (depth_map > 0.08) & (depth_map < (self.max_range * 0.99))
+
+        z = depth_map[valid_mask]
+        u_val = u[valid_mask]
+        v_val = v[valid_mask]
+
+        if len(z) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        # Project 2D pixels (u, v, z) to 3D camera local frame (x, y, z)
+        x = (u_val - cx) * z / fx
+        y = (v_val - cy) * z / fy
+        local_pts = np.column_stack((x, y, z))
+
+        # Transform camera local points into world coordinates
+        cam_matrix = np.array(sim.getObjectMatrix(self.cam_handle)).reshape(3, 4) 
+        R = cam_matrix[:, :3]
+        T = cam_matrix[:, 3]
+
+        self.world_pts = np.dot(local_pts, R.T) + T
+
+        self.wall_points = self.extract_wall_points(self.world_pts)
+
+        if len(self.wall_points) > 0:
+            print(f"Captured {len(self.wall_points)} wall points! Sample point: {self.wall_points[0]}")
+
+
+    def extract_wall_points(self, world_points, min_z=0.2, max_z=2.0):
+        if len(world_points) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        wall_mask = (world_points[:, 2] >= min_z) & (world_points[:, 2] <= max_z)
+        return world_points[wall_mask]
+    
 
 
