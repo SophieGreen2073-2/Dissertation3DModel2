@@ -2,6 +2,7 @@ from collections import deque
 import numpy as np
 from RobotModels.OccupancyBeliefGrid import UGVOccupancyGrid
 import math
+from scipy.spatial import cKDTree
 
 class UGVModel():
     def __init__(self, robot_handle, left_motor, right_motor, sim, speed_params,
@@ -83,88 +84,184 @@ class UGVModel():
 
         # Return the target position of the active waypoint
         target_wp = self.steps_queue[0]
+        if not hasattr(self, 'prev_target'):
+            self.prev_target = None
+
         if not self.prev_target == (target_wp[0], target_wp[1]):
             self.prev_target = (target_wp[0], target_wp[1])
-            self.is_locked_dir = False
 
         return self.occupancy_grid.grid_to_world(target_wp[0], target_wp[1])
 
+    # # Update robot target and speed
+    # def step_robot(self):
+    #     # Get the current position and orientation of the robot
+    #     curr_pos = self.sim.getObjectPosition(self.robot_handle, -1)
+    #     curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
+    #     curr_grid_pos = self.occupancy_grid.world_to_grid(curr_pos[0], curr_pos[1])
 
-    # Update robot target and speed
+    #     prob_grid = self.occupancy_grid.get_probability_grid()
+
+    #     # If not steps in the queue return
+    #     if not self.steps_queue:
+    #         self.steps_completed = True
+    #         return
+
+    #     # Check if the final point is still a frontier point
+    #     final_wp = self.steps_queue[-1]
+    #     if not self.check_frontier(self.directions, final_wp[0], final_wp[1]):
+    #         self.steps_completed = True
+    #         self.steps_queue.clear()
+    #         return
+
+    #     # Get the next target
+    #     target_wx, target_wy = self.get_lookahead_target(curr_pos, lookahead_dist=1)
+
+    #     # If no target, stop the robot
+    #     if target_wx is None:
+    #         self.sim.setJointTargetVelocity(self.left_motor, 0)
+    #         self.sim.setJointTargetVelocity(self.right_motor, 0)
+    #         self.steps_queue.clear()
+    #         self.steps_completed = True
+    #         return 
+
+    #     # Get direction and orientation to next step
+    #     step_dir = (target_wx - curr_pos[0], target_wy - curr_pos[1])
+    #     # dist_to_target = math.hypot(step_dir[0], step_dir[1])
+        
+    #     target_angle = math.atan2(step_dir[1], step_dir[0])
+    #     angle_diff = math.atan2(math.sin(target_angle - curr_orient[2]), math.cos(target_angle - curr_orient[2]))
+
+    #     # max_turn_speed = 1.5
+
+    #     # Set the motor speeds on each of the wheels
+    #     if not self.is_scanning_in_place:
+    #         # Moving forward while steering dynamically (no sign lock)
+    #         steer_correction = angle_diff * self.steering_gain
+    #         left_speed = self.top_speed + steer_correction
+    #         right_speed = self.top_speed - steer_correction
+
+    #         # Proportionally scale down if either wheel exceeds top_speed
+    #         max_mag = max(abs(left_speed), abs(right_speed))
+    #         if max_mag > self.top_speed:
+    #             scale = self.top_speed / max_mag
+    #             left_speed *= scale
+    #             right_speed *= scale
+    #     else:
+    #         # Turning in place smoothly
+    #         turn_speed = angle_diff * self.steering_gain
+    #         left_speed = max(-self.top_speed, min(self.top_speed, turn_speed))
+    #         right_speed = -left_speed
+
+    #     # Set in the simulation
+    #     self.sim.setJointTargetVelocity(self.left_motor, left_speed)
+    #     self.sim.setJointTargetVelocity(self.right_motor, right_speed)
+
+    #     # Check if the robot is close to the target
+    #     if self.is_scanning_in_place:
+    #         if abs(angle_diff) < 0.05:
+    #             self.steps_queue.clear()
+    #             self.steps_completed = True
+    #     else:
+    #         final_wp = self.steps_queue[-1]
+    #         final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
+    #         if math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1]) < 0.25:
+    #             self.steps_queue.clear()
+    #             self.steps_completed = True
+
+    #     # Scan and update belief
+    #     if self.step_count % self.sensors.scan_frequency == 0:
+    #         self.sensors.get_points(self.sim, self.robot_handle)
+    #         self.occupancy_grid.update_belief(self.sim, self.robot_handle,
+    #                                            self.sensors.slam_sensors[0].fov, 
+    #                                            self.sensors.slam_sensors[0].max_range, 
+    #                                            self.sensors.forward_lidar.wall_points,
+    #                                            self.sensors.vision_wall_points,
+    #                                            curr_grid_pos, curr_orient)
+
+    #     # Increase number of steps
+    #     self.step_count += 1
+
     def step_robot(self):
-        # Get the current position and orientation of the robot
         curr_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
         curr_grid_pos = self.occupancy_grid.world_to_grid(curr_pos[0], curr_pos[1])
 
-        prob_grid = self.occupancy_grid.get_probability_grid()
-
-        # If not steps in the queue return
         if not self.steps_queue:
             self.steps_completed = True
             return
 
-        # Get the next target
+        # Check if the final point is still a frontier point
+        final_wp = self.steps_queue[-1]
+        if not self.check_frontier(self.directions, final_wp[0], final_wp[1]):
+            self.steps_completed = True
+            self.steps_queue.clear()
+            return
+        
         target_wx, target_wy = self.get_lookahead_target(curr_pos, lookahead_dist=1)
         
-
-        # If no target, stop the robot
-        if target_wx is None:
-            self.sim.setJointTargetVelocity(self.left_motor, 0)
-            self.sim.setJointTargetVelocity(self.right_motor, 0)
-            self.steps_queue.clear()
-            self.steps_completed = True
-            return 
-
-        # Get direction and orientation to next step
-        step_dir = (target_wx - curr_pos[0], target_wy - curr_pos[1])
-        # dist_to_target = math.hypot(step_dir[0], step_dir[1])
+        # 1. Compute distance and desired angle to target
+        dx = target_wx - curr_pos[0]
+        dy = target_wy - curr_pos[1]
+        distance = math.hypot(dx, dy)
         
-        target_angle = math.atan2(step_dir[1], step_dir[0])
-        angle_diff = math.atan2(math.sin(target_angle - curr_orient[2]), math.cos(target_angle - curr_orient[2]))
+        # Check if we have arrived (e.g., within 20cm)
+        if distance < 0.2:
+            self.steps_completed = True
+            self.steps_queue.clear()
+            return
 
-        max_turn_speed = 1.5
-
-        # Set the motor speeds on each of the wheels
-        if not self.is_scanning_in_place:
-            left_speed = self.top_speed + (angle_diff * self.steering_gain)
-            right_speed = self.top_speed - (angle_diff * self.steering_gain)
+        desired_angle = math.atan2(dy, dx)
+        
+        # 2. Compute normalized heading error strictly between -pi and pi
+        heading_error = math.atan2(math.sin(desired_angle - curr_orient[2]), 
+                                math.cos(desired_angle - curr_orient[2]))
+        
+        # 3. Behavior Switch: Turn-in-place vs. Drive-and-steer
+        # If the robot is pointing too far away from the target, pivot in place first
+        if abs(heading_error) > 0.35:  # Roughly 20 degrees threshold
+            # Pure rotation in place
+            turn_speed = max(-self.top_speed, min(self.top_speed, heading_error * 1.5))
+            left_speed = -turn_speed
+            right_speed = turn_speed
         else:
-            # if abs(angle_diff) > 2.8:
-            #     turn_speed = 1.5
-            # else:
-            if not self.is_locked_dir:
-                self.locked_sign = 1 if angle_diff > 0 else -1
-
-            turn_speed = max(-max_turn_speed, min(max_turn_speed, angle_diff * self.steering_gain)) * self.locked_sign
-            left_speed = turn_speed
-            right_speed = -turn_speed
+            # Move forward while making minor steering corrections
+            steering_gain = 1.5
+            steer_correction = heading_error * steering_gain
             
-        # Set in the simulation
+            left_speed = self.top_speed + steer_correction
+            right_speed = self.top_speed - steer_correction
+            
+            # Proportionally scale down if either wheel exceeds top_speed
+            max_mag = max(abs(left_speed), abs(right_speed))
+            if max_mag > self.top_speed:
+                left_speed = (left_speed / max_mag) * self.top_speed
+                right_speed = (right_speed / max_mag) * self.top_speed
+
         self.sim.setJointTargetVelocity(self.left_motor, left_speed)
         self.sim.setJointTargetVelocity(self.right_motor, right_speed)
 
+
         # Check if the robot is close to the target
-        if self.is_scanning_in_place:
-            if abs(angle_diff) < 0.05:
-                self.steps_queue.clear()
-                self.steps_completed = True
-        else:
-            final_wp = self.steps_queue[-1]
-            final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
-            if math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1]) < 0.25:
-                self.steps_queue.clear()
-                self.steps_completed = True
+        # if self.is_scanning_in_place:
+        #     if abs(angle_diff) < 0.05:
+        #         self.steps_queue.clear()
+        #         self.steps_completed = True
+        # else:
+        # final_wp = self.steps_queue[-1]
+        # final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
+        # if math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1]) < 0.25:
+        #     self.steps_queue.clear()
+        #     self.steps_completed = True
 
         # Scan and update belief
         if self.step_count % self.sensors.scan_frequency == 0:
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
-                                               self.sensors.slam_sensors[0].fov, 
-                                               self.sensors.slam_sensors[0].max_range, 
-                                               self.sensors.forward_lidar.wall_points,
-                                               self.sensors.vision_wall_points,
-                                               curr_grid_pos, curr_orient)
+                                                self.sensors.slam_sensors[0].fov, 
+                                                self.sensors.slam_sensors[0].max_range, 
+                                                self.sensors.forward_lidar.wall_points,
+                                                self.sensors.vision_wall_points,
+                                                curr_grid_pos, curr_orient)
 
         # Increase number of steps
         self.step_count += 1
@@ -376,15 +473,20 @@ class UGVModel():
 
         wall_belief = self.occupancy_grid.get_probability_grid()
 
+        # if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
+        self.sensors.get_points(self.sim, self.robot_handle)
+        self.occupancy_grid.update_belief(self.sim, self.robot_handle,
+                                            self.sensors.slam_sensors[0].fov, 
+                                            self.sensors.slam_sensors[0].max_range, 
+                                            self.sensors.forward_lidar.wall_points,
+                                            self.sensors.vision_wall_points,
+                                            current_grid_pos, curr_orient)
+
         if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
-            self.sensors.get_points(self.sim, self.robot_handle)
-            self.occupancy_grid.update_belief(self.sim, self.robot_handle,
-                                               self.sensors.slam_sensors[0].fov, 
-                                               self.sensors.slam_sensors[0].max_range, 
-                                               self.sensors.forward_lidar.wall_points,
-                                               self.sensors.vision_wall_points,
-                                               current_grid_pos, curr_orient)
             return
+
+        if current_grid_pos == (16, 72):
+            print("test")
 
         # Go through each position until frontier found
         while len(queue) != 0 and len(frontiers_found) <= self.frontier_count:
@@ -444,6 +546,26 @@ class UGVModel():
 
         # If no destination found then grid is completed
         if len(dest_location) == 0:
+            print("\n--- YAMAUCHI FAILED: NO DESTINATION FOUND ---")
+            print(f"Grid Dimensions: {self.occupancy_grid.width} x {self.occupancy_grid.height}")
+            print("Legend: [.] = Free Space (<0.4), [?] = Unscanned (~0.5), [#] = Wall (>0.6)\n")
+            
+            wall_belief = self.occupancy_grid.get_probability_grid()
+            
+            # Print row by row (iterating from top to bottom of the grid)
+            for r in range(self.occupancy_grid.height - 1, -1, -1):
+                row_str = f"{r:3d} | "
+                for c in range(self.occupancy_grid.width):
+                    val = wall_belief[r][c]
+                    if val > 0.6:
+                        row_str += "#"  # Wall
+                    elif 0.45 <= val <= 0.55:
+                        row_str += "?"  # Unscanned / Unknown
+                    else:
+                        row_str += "."  # Free space
+                print(row_str)
+            print("---------------------------------------------")
+
             self.completed = True
             return
 
@@ -454,16 +576,16 @@ class UGVModel():
         step_dir = (target_world_position[0] - current_world_pos[0], target_world_position[1] - current_world_pos[1])
         dist_to_target = math.hypot(step_dir[0], step_dir[1])
 
-        is_line_of_sight = self.occupancy_grid.is_line_of_sight(current_grid_pos[0], current_grid_pos[1], dest_location[0], dest_location[1])
+        # is_line_of_sight = self.occupancy_grid.is_line_of_sight(current_grid_pos[0], current_grid_pos[1], dest_location[0], dest_location[1])
 
         # If the target is within the max scan range then scan in place
-        if dist_to_target < self.max_vision_range * 0.98 and is_line_of_sight:
-            self.is_scanning_in_place = True
-            self.steps_queue.append(dest_location)
-        else:
+        # if dist_to_target < self.max_vision_range * 0.98 and is_line_of_sight and dest_location != self.prev_target:
+        #     self.is_scanning_in_place = True
+        #     self.steps_queue.append(dest_location)
+        # else:
             # Generate path to target
-            self.do_a_star(current_grid_pos, dest_location, True)
-            self.is_scanning_in_place = False
+        self.do_a_star(current_grid_pos, dest_location, True)
+        # self.is_scanning_in_place = False
 
         if len(self.steps_queue) != 0:
             self.steps_completed = False
@@ -612,7 +734,7 @@ class UGVModel():
         g_score[start[1]][start[0]] = 0                 
         f_score[start[1]][start[0]] = self.heuristic_function(start, end)
 
-        directions = ['north', 'south', 'east', 'west']
+        directions = ['north', 'south', 'east', 'west', 'north_east', 'south_east', 'south_west', 'north_west']
 
         wall_belief = self.occupancy_grid.get_probability_grid()
 
@@ -623,7 +745,11 @@ class UGVModel():
             # Check if the target has been reached, if so generate path and return
             if (current_node == end):
                 path = self.generate_path(preceeding_nodes, end, is_find_destination)
-                return path
+                if is_find_destination:
+                    self.steps_queue = self.prune_path(self.steps_queue)
+                    self.steps_queue = deque(self.steps_queue)
+
+                return self.prune_path(deque(path))
             
             # Remove current node from open nodes
             open_nodes.remove(current_node)
@@ -635,16 +761,24 @@ class UGVModel():
                 neighbour_node = (current_node[0] + dx, current_node[1] + dy)
 
                 # If the robot is returning home then only return along already scanned paths
-                if is_find_destination:
+                # if is_find_destination:
                     # Check that the neighbour is within the grid and not a wall
-                    if (neighbour_node[0] < 0 or neighbour_node[1] < 0 or neighbour_node[0] >= self.occupancy_grid.width or neighbour_node[1] >= self.occupancy_grid.height or wall_belief[neighbour_node[1]][neighbour_node[0]] > 0.4):
-                        continue
-                else:
-                    if (neighbour_node[0] < 0 or neighbour_node[1] < 0 or neighbour_node[0] >= self.occupancy_grid.width or neighbour_node[1] >= self.occupancy_grid.height or wall_belief[neighbour_node[1]][neighbour_node[0]] <= 0.6):
-                        continue
+                if (neighbour_node[0] < 0 or neighbour_node[1] < 0 or 
+                    neighbour_node[0] >= self.occupancy_grid.width or 
+                    neighbour_node[1] >= self.occupancy_grid.height):
+                    continue
+                # else:
+                #     if (neighbour_node[0] < 0 or neighbour_node[1] < 0 or neighbour_node[0] >= self.occupancy_grid.width or neighbour_node[1] >= self.occupancy_grid.height or wall_belief[neighbour_node[1]][neighbour_node[0]] > 0.6):
+                #         continue
+
+                cell_belief = wall_belief[neighbour_node[1]][neighbour_node[0]]
+                if cell_belief > 0.4:
+                    continue
+
+                move_cost = 1.414 if (dx != 0 and dy != 0) else 1.0
 
                 # Calculate current g score for neighbour from selected node
-                curr_g_score = g_score[current_node[1]][current_node[0]] + 1
+                curr_g_score = g_score[current_node[1]][current_node[0]] + move_cost
 
                 # If calculated g score is better than current g score for the selected neighbour, update position
                 if (curr_g_score < g_score[neighbour_node[1]][neighbour_node[0]]):
@@ -665,22 +799,17 @@ class UGVModel():
             return path
 
         pruned = [path[0]]
+        curr_dx = path[1][0] - path[0][0]
+        curr_dy = path[1][1] - path[0][1]
+
         for i in range(1, len(path) - 1):
-            prev = path[i - 1]
-            curr = path[i]
-            next_node = path[i + 1]
+            next_dx = path[i + 1][0] - path[i][0]
+            next_dy = path[i + 1][1] - path[i][1]
 
-            dir1 = (curr[0] - prev[0], curr[1] - prev[1])
-            dir2 = (next_node[0] - curr[0], next_node[1] - curr[1])
-
-            len1 = math.hypot(dir1[0], dir1[1])
-            len2 = math.hypot(dir2[0], dir2[1])
-
-            norm1 = (round(dir1[0] / len1, 2), round(dir1[1] / len1, 2)) if len1 > 0 else (0, 0)
-            norm2 = (round(dir2[0] / len2, 2), round(dir2[1] / len2, 2)) if len2 > 0 else (0, 0)
-
-            if norm1 != norm2:
-                pruned.append(curr)
+            if next_dx != curr_dx or next_dy != curr_dy:
+                pruned.append(path[i])
+                curr_dx = next_dx
+                curr_dy = next_dy
 
         pruned.append(path[-1])
         return pruned
@@ -830,41 +959,67 @@ class VisionSensor():
         width, height = resolution[0], resolution[1]
         depth_map = np.frombuffer(depth_bytes, dtype=np.float32).reshape(height, width)
 
+        mid_row = height // 2
+        depth_row = depth_map[mid_row, :]
+
         # Camera model
         fov_rad = np.radians(self.fov)
         fx = width / (2.0 * np.tan(fov_rad / 2.0))
-        fy = fx
+        # fy = fx
         cx = width / 2.0
-        cy = height / 2.0
+        # cy = height / 2.0
+
+        valid_mask = (depth_row > 0.3) & (depth_row < (self.max_range * 0.99))
+
+        if not np.any(valid_mask):
+            self.wall_points = np.empty((0, 2), dtype=np.float32)
+            return
 
         # Create pixel coordinate grid
-        u, v = np.meshgrid(np.arange(width), np.arange(height))
+        u = np.arange(width)[valid_mask]
+        z = depth_row[valid_mask]
+
+        x_local = (u - cx) * z / fx
+        y_local = np.zeros_like(x_local)
+        z_local = z
+
+        local_pts = np.column_stack((x_local, y_local, z_local))
 
         # Filter out background clipping plane and empty depth points
-        valid_mask = (depth_map > 0.08) & (depth_map < (self.max_range * 0.99))
+        # valid_mask = (depth_map > 0.3) & (depth_map < (self.max_range * 0.99))
 
-        z = depth_map[valid_mask]
-        u_val = u[valid_mask]
-        v_val = v[valid_mask]
+        # z = depth_map[valid_mask]
+        # u_val = u[valid_mask]
+        # v_val = v[valid_mask]
 
-        if len(z) == 0:
-            return np.empty((0, 3), dtype=np.float32)
+        # if len(z) == 0:
+        #     return np.empty((0, 3), dtype=np.float32)
 
-        # Project 2D pixels (u, v, z) to 3D camera local frame (x, y, z)
-        x = (u_val - cx) * z / fx
-        y = (v_val - cy) * z / fy
-        local_pts = np.column_stack((x, y, z))
+        # # Project 2D pixels (u, v, z) to 3D camera local frame (x, y, z)
+        # x = (u_val - cx) * z / fx
+        # y = (v_val - cy) * z / fy
+        # local_pts = np.column_stack((x, y, z))
 
         # Transform camera local points into world coordinates
         cam_matrix = np.array(sim.getObjectMatrix(self.cam_handle)).reshape(3, 4) 
         R = cam_matrix[:, :3]
         T = cam_matrix[:, 3]
 
-        self.world_pts = np.dot(local_pts, R.T) + T
+        world_pts_raw = np.dot(local_pts, R.T) + T
 
         robot_pos = sim.getObjectPosition(robot_handle, -1)
 
-        self.wall_points = self.extract_wall_points(self.world_pts, robot_pos)
+        # min_z_height = 0.3
+        # max_z_height = robot_pos[2] + 2.0
+
+        # height_mask = (world_pts_raw[:, 2] > min_z_height) & (world_pts_raw[:, 2] < max_z_height)
+        # self.world_pts = world_pts_raw[height_mask]
+
+        xy_distance = np.linalg.norm(world_pts_raw[:, :2] - robot_pos[:2], axis=1)
+        not_robot_mask = xy_distance > 0.8
+
+        # self.wall_points = self.extract_wall_points(not_robot_mask, robot_pos)
+        self.wall_points = world_pts_raw[not_robot_mask, :2]
 
         if len(self.wall_points) > 0:
             print(f"Captured {len(self.wall_points)} wall points! Sample point: {self.wall_points[0]}")
@@ -882,7 +1037,17 @@ class VisionSensor():
         wall_height_mask = (world_points[:, 2] >= min_z) & (world_points[:, 2] <= max_z)
 
         final_mask = not_robot_mask & wall_height_mask
-        return world_points[final_mask]
+        filtered_points = world_points[final_mask]
+
+        # if len(filtered_points) > 10:
+        #     # Quick density check: keep points that have at least a few neighbors nearby
+        #     tree = cKDTree(filtered_points[:, :2])
+        #     # Count neighbors within a 0.3m radius
+        #     neighbor_counts = [len(tree.query_ball_point(pt[:2], r=0.3)) for pt in filtered_points]
+        #     dense_mask = np.array(neighbor_counts) > 3  # Must have at least 3 neighbors to be a "wall"
+        #     filtered_points = filtered_points[dense_mask]
+
+        return filtered_points
     
 
 
