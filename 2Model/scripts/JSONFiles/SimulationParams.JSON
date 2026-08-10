@@ -23,7 +23,7 @@
 
     "UGVParams":{
         "ReleaseDelay": 10,
-        "WallDangerZone": 2,
+        "WallDangerZone": 1,
         "Speed":{
             "Top": 3,
             "Danger": 1,
@@ -31,7 +31,7 @@
             "Acceleration": 2.5
         },
         "Sensors":{
-            "ScanFrequency": 15,
+            "ScanFrequency": 2,
             "LiDAR":{
                 "MaxRange": 24,
                 "MinRange": 0.8

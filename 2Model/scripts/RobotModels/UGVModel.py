@@ -36,6 +36,7 @@ class UGVModel():
         self.steps_queue = deque()
         self.prev_target = None
         self.locked_sign = 1
+        self.failed_frontiers = set()
 
         # Battery
         self.battery = Battery(battery_params)
@@ -186,6 +187,8 @@ class UGVModel():
         curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
         curr_grid_pos = self.occupancy_grid.world_to_grid(curr_pos[0], curr_pos[1])
 
+        wall_belief = self.occupancy_grid.get_probability_grid()
+
         if not self.steps_queue:
             self.steps_completed = True
             return
@@ -205,7 +208,11 @@ class UGVModel():
         distance = math.hypot(dx, dy)
         
         # Check if we have arrived (e.g., within 20cm)
-        if distance < 0.2:
+        if distance < 1:
+            if len(self.steps_queue) == 1:
+                final_wp = self.steps_queue[0]
+                if self.check_frontier(self.directions, final_wp[0], final_wp[1]):
+                    self.failed_frontiers.add(final_wp)
             self.steps_completed = True
             self.steps_queue.clear()
             return
@@ -485,8 +492,8 @@ class UGVModel():
         if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
             return
 
-        if current_grid_pos == (16, 72):
-            print("test")
+        # if current_grid_pos == (16, 72):
+        #     print("test")
 
         # Go through each position until frontier found
         while len(queue) != 0 and len(frontiers_found) <= self.frontier_count:
@@ -495,6 +502,10 @@ class UGVModel():
 
             # If p has not been visited, or likely a wall
             if (cc, cr) in MapCloseList or wall_belief[cr, cc] >= 0.4:
+                continue
+
+            # Check if the frontier is in the failed list
+            if (cc, cr) in self.failed_frontiers:
                 continue
             
             if (cc, cr) != current_grid_pos:
@@ -546,26 +557,6 @@ class UGVModel():
 
         # If no destination found then grid is completed
         if len(dest_location) == 0:
-            print("\n--- YAMAUCHI FAILED: NO DESTINATION FOUND ---")
-            print(f"Grid Dimensions: {self.occupancy_grid.width} x {self.occupancy_grid.height}")
-            print("Legend: [.] = Free Space (<0.4), [?] = Unscanned (~0.5), [#] = Wall (>0.6)\n")
-            
-            wall_belief = self.occupancy_grid.get_probability_grid()
-            
-            # Print row by row (iterating from top to bottom of the grid)
-            for r in range(self.occupancy_grid.height - 1, -1, -1):
-                row_str = f"{r:3d} | "
-                for c in range(self.occupancy_grid.width):
-                    val = wall_belief[r][c]
-                    if val > 0.6:
-                        row_str += "#"  # Wall
-                    elif 0.45 <= val <= 0.55:
-                        row_str += "?"  # Unscanned / Unknown
-                    else:
-                        row_str += "."  # Free space
-                print(row_str)
-            print("---------------------------------------------")
-
             self.completed = True
             return
 
@@ -777,7 +768,22 @@ class UGVModel():
 
                 move_cost = 1.414 if (dx != 0 and dy != 0) else 1.0
 
-                # Calculate current g score for neighbour from selected node
+                # Penalise points close to a wall
+                wall_pen = 0.3
+                clearance_cells = max(1, int(round(wall_pen / self.occupancy_grid.resolution)))
+                near_wall = False
+                for ny in range(max(0, neighbour_node[1] - clearance_cells), 
+                                  min(self.occupancy_grid.height, neighbour_node[1] + clearance_cells + 1)):
+                    for nx in range(max(0, neighbour_node[0] - clearance_cells), 
+                                      min(self.occupancy_grid.width, neighbour_node[0] + clearance_cells + 1)):
+                        if wall_belief[ny][nx] > 0.4:
+                            near_wall = True
+                            break
+                    if near_wall:
+                        break
+
+                if near_wall:
+                    move_cost *= 15.0
                 curr_g_score = g_score[current_node[1]][current_node[0]] + move_cost
 
                 # If calculated g score is better than current g score for the selected neighbour, update position
@@ -889,7 +895,7 @@ class Sensors():
 
         # 360 SLAM
         self.slam_sensors = []
-        for i in range(4): self.slam_sensors.append(VisionSensor(sensor_params["VisionSensor"], robot_handle, i, sim))
+        for i in range(8): self.slam_sensors.append(VisionSensor(sensor_params["VisionSensor"], robot_handle, i + 1, sim))
         self.vision_wall_points = []
 
 
@@ -898,7 +904,7 @@ class Sensors():
 
         # Get each of the wall points scanned by the camera sensors
         for cam in self.slam_sensors:
-            cam.get_lidar_points(sim, robot_handle)
+            cam.get_lidar_point(sim)
 
             if cam.wall_points is not None and len(cam.wall_points) > 0:
                 all_points.append(cam.wall_points)
@@ -921,7 +927,7 @@ class ForwardLiDAR():
         self.max_range = LiDAR_params["MaxRange"]
 
         # Camera handle
-        self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor')
+        self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor[0]')
 
         self.wall_points = []
 
@@ -946,108 +952,118 @@ class VisionSensor():
         self.fov = vision_params["FovDegrees"]
 
         # Camera name
-        self.cam_handle = sim.getObject(f'/PioneerP3DX/visionSensor[{camera_id}]')
+        self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor[{camera_id}]')
 
-    # Get LiDAR point cloud from CopelliaSim
-    def get_lidar_points(self, sim, robot_handle):
-        # Get raw depth matrix (1 = metres)
-        depth_bytes, resolution = sim.getVisionSensorDepth(self.cam_handle, 1)
+    def get_lidar_point(self, sim):
+        res, dist, detected_point, obj_handle, normal_vector = sim.checkProximitySensor(self.cam_handle, sim.handle_all)
 
-        if not depth_bytes or len(depth_bytes) == 0:
-            return np.empty((0, 3), dtype=np.float32)
-
-        width, height = resolution[0], resolution[1]
-        depth_map = np.frombuffer(depth_bytes, dtype=np.float32).reshape(height, width)
-
-        mid_row = height // 2
-        depth_row = depth_map[mid_row, :]
-
-        # Camera model
-        fov_rad = np.radians(self.fov)
-        fx = width / (2.0 * np.tan(fov_rad / 2.0))
-        # fy = fx
-        cx = width / 2.0
-        # cy = height / 2.0
-
-        valid_mask = (depth_row > 0.3) & (depth_row < (self.max_range * 0.99))
-
-        if not np.any(valid_mask):
-            self.wall_points = np.empty((0, 2), dtype=np.float32)
+        if res > 0:
+            sensor_matrix = sim.getObjectMatrix(self.cam_handle, -1)
+            self.wall_points = sim.multiplyVector(sensor_matrix, detected_point)
             return
 
-        # Create pixel coordinate grid
-        u = np.arange(width)[valid_mask]
-        z = depth_row[valid_mask]
+        self.wall_points = []
 
-        x_local = (u - cx) * z / fx
-        y_local = np.zeros_like(x_local)
-        z_local = z
+    # Get LiDAR point cloud from CopelliaSim
+    # def get_lidar_points(self, sim, robot_handle):
+    #     # Get raw depth matrix (1 = metres)
+    #     depth_bytes, resolution = sim.getVisionSensorDepth(self.cam_handle, 1)
 
-        local_pts = np.column_stack((x_local, y_local, z_local))
+    #     if not depth_bytes or len(depth_bytes) == 0:
+    #         return np.empty((0, 3), dtype=np.float32)
 
-        # Filter out background clipping plane and empty depth points
-        # valid_mask = (depth_map > 0.3) & (depth_map < (self.max_range * 0.99))
+    #     width, height = resolution[0], resolution[1]
+    #     depth_map = np.frombuffer(depth_bytes, dtype=np.float32).reshape(height, width)
 
-        # z = depth_map[valid_mask]
-        # u_val = u[valid_mask]
-        # v_val = v[valid_mask]
+    #     mid_row = height // 2
+    #     depth_row = depth_map[mid_row, :]
 
-        # if len(z) == 0:
-        #     return np.empty((0, 3), dtype=np.float32)
+    #     # Camera model
+    #     fov_rad = np.radians(self.fov)
+    #     fx = width / (2.0 * np.tan(fov_rad / 2.0))
+    #     # fy = fx
+    #     cx = width / 2.0
+    #     # cy = height / 2.0
 
-        # # Project 2D pixels (u, v, z) to 3D camera local frame (x, y, z)
-        # x = (u_val - cx) * z / fx
-        # y = (v_val - cy) * z / fy
-        # local_pts = np.column_stack((x, y, z))
+    #     valid_mask = (depth_row > 0.3) & (depth_row < (self.max_range * 0.99))
 
-        # Transform camera local points into world coordinates
-        cam_matrix = np.array(sim.getObjectMatrix(self.cam_handle)).reshape(3, 4) 
-        R = cam_matrix[:, :3]
-        T = cam_matrix[:, 3]
+    #     if not np.any(valid_mask):
+    #         self.wall_points = np.empty((0, 2), dtype=np.float32)
+    #         return
 
-        world_pts_raw = np.dot(local_pts, R.T) + T
+    #     # Create pixel coordinate grid
+    #     u = np.arange(width)[valid_mask]
+    #     z = depth_row[valid_mask]
 
-        robot_pos = sim.getObjectPosition(robot_handle, -1)
+    #     x_local = (u - cx) * z / fx
+    #     y_local = np.zeros_like(x_local)
+    #     z_local = z
 
-        # min_z_height = 0.3
-        # max_z_height = robot_pos[2] + 2.0
+    #     local_pts = np.column_stack((x_local, y_local, z_local))
 
-        # height_mask = (world_pts_raw[:, 2] > min_z_height) & (world_pts_raw[:, 2] < max_z_height)
-        # self.world_pts = world_pts_raw[height_mask]
+    #     # Filter out background clipping plane and empty depth points
+    #     # valid_mask = (depth_map > 0.3) & (depth_map < (self.max_range * 0.99))
 
-        xy_distance = np.linalg.norm(world_pts_raw[:, :2] - robot_pos[:2], axis=1)
-        not_robot_mask = xy_distance > 0.8
+    #     # z = depth_map[valid_mask]
+    #     # u_val = u[valid_mask]
+    #     # v_val = v[valid_mask]
 
-        # self.wall_points = self.extract_wall_points(not_robot_mask, robot_pos)
-        self.wall_points = world_pts_raw[not_robot_mask, :2]
+    #     # if len(z) == 0:
+    #     #     return np.empty((0, 3), dtype=np.float32)
 
-        if len(self.wall_points) > 0:
-            print(f"Captured {len(self.wall_points)} wall points! Sample point: {self.wall_points[0]}")
+    #     # # Project 2D pixels (u, v, z) to 3D camera local frame (x, y, z)
+    #     # x = (u_val - cx) * z / fx
+    #     # y = (v_val - cy) * z / fy
+    #     # local_pts = np.column_stack((x, y, z))
+
+    #     # Transform camera local points into world coordinates
+    #     cam_matrix = np.array(sim.getObjectMatrix(self.cam_handle)).reshape(3, 4) 
+    #     R = cam_matrix[:, :3]
+    #     T = cam_matrix[:, 3]
+
+    #     world_pts_raw = np.dot(local_pts, R.T) + T
+
+    #     robot_pos = sim.getObjectPosition(robot_handle, -1)
+
+    #     # min_z_height = 0.3
+    #     # max_z_height = robot_pos[2] + 2.0
+
+    #     # height_mask = (world_pts_raw[:, 2] > min_z_height) & (world_pts_raw[:, 2] < max_z_height)
+    #     # self.world_pts = world_pts_raw[height_mask]
+
+    #     xy_distance = np.linalg.norm(world_pts_raw[:, :2] - robot_pos[:2], axis=1)
+    #     not_robot_mask = xy_distance > 0.8
+
+    #     # self.wall_points = self.extract_wall_points(not_robot_mask, robot_pos)
+    #     self.wall_points = world_pts_raw[not_robot_mask, :2]
+
+    #     if len(self.wall_points) > 0:
+    #         print(f"Captured {len(self.wall_points)} wall points! Sample point: {self.wall_points[0]}")
 
 
-    def extract_wall_points(self, world_points, robot_pos, min_dist = 0.8, min_z=0.2, max_z=2.0):
-        if len(world_points) == 0:
-            return np.empty((0, 3), dtype=np.float32)
+    # def extract_wall_points(self, world_points, robot_pos, min_dist = 0.8, min_z=0.2, max_z=2.0):
+    #     if len(world_points) == 0:
+    #         return np.empty((0, 3), dtype=np.float32)
 
-        # 1. Filter out points belonging to the robot itself (too close to robot center in X-Y plane)
-        xy_distances = np.linalg.norm(world_points[:, :2] - robot_pos[:2], axis=1)
-        not_robot_mask = xy_distances > min_dist
+    #     # 1. Filter out points belonging to the robot itself (too close to robot center in X-Y plane)
+    #     xy_distances = np.linalg.norm(world_points[:, :2] - robot_pos[:2], axis=1)
+    #     not_robot_mask = xy_distances > min_dist
 
-        # 2. Filter out floor/ceiling noise using world Z height
-        wall_height_mask = (world_points[:, 2] >= min_z) & (world_points[:, 2] <= max_z)
+    #     # 2. Filter out floor/ceiling noise using world Z height
+    #     wall_height_mask = (world_points[:, 2] >= min_z) & (world_points[:, 2] <= max_z)
 
-        final_mask = not_robot_mask & wall_height_mask
-        filtered_points = world_points[final_mask]
+    #     final_mask = not_robot_mask & wall_height_mask
+    #     filtered_points = world_points[final_mask]
 
-        # if len(filtered_points) > 10:
-        #     # Quick density check: keep points that have at least a few neighbors nearby
-        #     tree = cKDTree(filtered_points[:, :2])
-        #     # Count neighbors within a 0.3m radius
-        #     neighbor_counts = [len(tree.query_ball_point(pt[:2], r=0.3)) for pt in filtered_points]
-        #     dense_mask = np.array(neighbor_counts) > 3  # Must have at least 3 neighbors to be a "wall"
-        #     filtered_points = filtered_points[dense_mask]
+    #     # if len(filtered_points) > 10:
+    #     #     # Quick density check: keep points that have at least a few neighbors nearby
+    #     #     tree = cKDTree(filtered_points[:, :2])
+    #     #     # Count neighbors within a 0.3m radius
+    #     #     neighbor_counts = [len(tree.query_ball_point(pt[:2], r=0.3)) for pt in filtered_points]
+    #     #     dense_mask = np.array(neighbor_counts) > 3  # Must have at least 3 neighbors to be a "wall"
+    #     #     filtered_points = filtered_points[dense_mask]
 
-        return filtered_points
+    #     return filtered_points
     
 
 
