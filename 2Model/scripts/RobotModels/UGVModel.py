@@ -425,7 +425,7 @@ class UGVModel():
                 if 0<= adj_point[0] < self.occupancy_grid.width and 0 <= adj_point[1] < self.occupancy_grid.height:
                     if adj_point not in MapOpenList and adj_point not in MapCloseList:
                         
-                        if wall_belief[adj_point[1], adj_point[0]] <= 0.6:
+                        if wall_belief[adj_point[1], adj_point[0]] < 0.5:
                             queue.append(adj_point)
                             MapOpenList.add(adj_point)
             
@@ -870,7 +870,7 @@ class VisionSensor():
             print(f"Captured {len(self.wall_points)} wall points! Sample point: {self.wall_points[0]}")
 
 
-    def extract_wall_points(self, world_points, robot_pos, min_dist = 0.4, min_z=0.2, max_z=2.0):
+    def extract_wall_points(self, world_points, robot_pos, min_dist = 0.8, min_z=0.2, max_z=2.0):
         if len(world_points) == 0:
             return np.empty((0, 3), dtype=np.float32)
 
