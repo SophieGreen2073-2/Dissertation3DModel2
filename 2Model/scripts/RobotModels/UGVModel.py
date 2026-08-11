@@ -2,7 +2,9 @@ from collections import deque
 import numpy as np
 from RobotModels.OccupancyBeliefGrid import UGVOccupancyGrid
 import math
-from scipy.spatial import cKDTree
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import LaserScan
 
 class UGVModel():
     def __init__(self, robot_handle, left_motor, right_motor, sim, speed_params,
@@ -483,10 +485,9 @@ class UGVModel():
         # if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
         self.sensors.get_points(self.sim, self.robot_handle)
         self.occupancy_grid.update_belief(self.sim, self.robot_handle,
-                                            self.sensors.slam_sensors[0].fov, 
-                                            self.sensors.slam_sensors[0].max_range, 
+                                            10, 
                                             self.sensors.forward_lidar.wall_points,
-                                            self.sensors.vision_wall_points,
+                                            self.sensors.lidar_spin.wall_points,
                                             current_grid_pos, curr_orient)
 
         if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
@@ -606,11 +607,10 @@ class UGVModel():
             self.occupancy_grid.belief_grid[current_grid_pos[1], current_grid_pos[0]] = -5
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
-                                                           self.sensors.slam_sensors[0].fov, 
-                                                           self.sensors.slam_sensors[0].max_range, 
-                                                           self.sensors.forward_lidar.wall_points,
-                                                           self.sensors.vision_wall_points,
-                                                           current_grid_pos, curr_orient)
+                                            10, 
+                                            self.sensors.forward_lidar.wall_points,
+                                            self.sensors.lidar_spin.wall_points,
+                                            current_grid_pos, curr_orient)
             
             return
 
@@ -893,27 +893,34 @@ class Sensors():
         # Forward lidar
         self.forward_lidar = ForwardLiDAR(sensor_params["LiDAR"], robot_handle, sim)
 
+        self.lidar_spin = UGVPerception(robot_handle, sim)
+
         # 360 SLAM
-        self.slam_sensors = []
-        for i in range(8): self.slam_sensors.append(VisionSensor(sensor_params["VisionSensor"], robot_handle, i + 1, sim))
-        self.vision_wall_points = []
+        # self.slam_sensors = []
+        # for i in range(8): self.slam_sensors.append(VisionSensor(sensor_params["VisionSensor"], robot_handle, i + 1, sim))
+        # self.vision_wall_points = []
+        # self.vision_sensor = VisionSensor(sensor_params["VisionSensor"], robot_handle, sim)
 
 
     def get_points(self, sim, robot_handle):
         all_points = []
 
         # Get each of the wall points scanned by the camera sensors
-        for cam in self.slam_sensors:
-            cam.get_lidar_point(sim)
+        # for cam in self.slam_sensors:
+        #     cam.get_lidar_point(sim)
 
-            if cam.wall_points is not None and len(cam.wall_points) > 0:
-                all_points.append(cam.wall_points)
+        #     if cam.wall_points is not None and len(cam.wall_points) > 0:
+        #         all_points.append(cam.wall_points)
 
-        if all_points:
-            self.vision_wall_points = np.vstack(all_points)
-        else:
-            self.vision_wall_points = np.array([])
+        # if all_points:
+        #     self.vision_wall_points = np.vstack(all_points)
+        # else:
+        #     self.vision_wall_points = np.array([])
+    
+        # self.vision_sensor.get_lidar_point(sim)
 
+        rclpy.spin_once(self.lidar_spin, timeout_sec=0.1)
+        
         # Get the points directly ahead of the forward lidar (accurate sensing)
         self.forward_lidar.get_lidar_point(sim)
 
@@ -940,29 +947,87 @@ class ForwardLiDAR():
             return
 
         self.wall_points = []
+
+
+class UGVPerception(Node):
+    def __init__(self, robot_handle, sim):
+        super().__init__('ugv_perception_node')
+        self.subscription = self.create_subscription(
+            LaserScan,
+            '/scan',
+            self.listener_callback,
+            10
+        )
+        self.wall_points = np.empty((0, 2), dtype=np.float32)
+        self.robot_handle = robot_handle
+        self.sim = sim
+
+    def listener_callback(self, msg):
+        wall_points = []
+        angle = msg.angle_min
+
+        for r in msg.ranges:
+            if msg.range_min < r < msg.range_max:
+                x = r * np.cos(angle)
+                y = r * np.sin(angle)
+                wall_points.append([x, y])
+            angle += msg.angle_increment
+
+        if wall_points:
+            local_points = np.array(wall_points, dtype=np.float32)
+        else:
+            local_points = np.empty((0, 2), dtype=np.float32)
+
+        self.wall_points = self.transform_to_global(local_points)
+
+    def transform_to_global(self, local_points):
+        robot_pos = self.sim.getObjectPosition(self.robot_handle, -1)
+        robot_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
+
+        if len(local_points) == 0:
+            return np.empty((0, 2), dtype=np.float32)
+
+        # Create rotation matrix for the robot's heading
+        c, s = np.cos(robot_orient[2]), np.sin(robot_orient[2])
+        R = np.array(((c, -s), (s, c)), dtype=np.float32)
+
+        # Rotate local points and translate by global robot position
+        global_points = np.dot(local_points, R.T) + np.array([robot_pos[0], robot_pos[1]], dtype=np.float32)
+        return global_points
             
 
-class VisionSensor():
-    def __init__(self, vision_params, robot_handle, camera_id, sim):
-        # Vision range
-        self.min_range = vision_params["MinRange"]
-        self.max_range = vision_params["MaxRange"]
+# class VisionSensor():
+#     def __init__(self, vision_params, robot_handle, sim):
+#         # Vision range
+#         self.min_range = vision_params["MinRange"]
+#         self.max_range = vision_params["MaxRange"]
 
-        # FoV
-        self.fov = vision_params["FovDegrees"]
+#         # FoV
+#         self.fov = vision_params["FovDegrees"]
 
-        # Camera name
-        self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor[{camera_id}]')
+#         # Camera name
+#         self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor[1]')
+#         self.robot_handle = robot_handle
 
-    def get_lidar_point(self, sim):
-        res, dist, detected_point, obj_handle, normal_vector = sim.checkProximitySensor(self.cam_handle, sim.handle_all)
+#     def get_lidar_point(self, sim):
+#         script_handle = sim.getScript(
+#             sim.scripttype_childscript, 
+#             self.robot_handle
+#         )
 
-        if res > 0:
-            sensor_matrix = sim.getObjectMatrix(self.cam_handle, -1)
-            self.wall_points = sim.multiplyVector(sensor_matrix, detected_point)
-            return
+#         # Then call the Lua function using that script handle
+#         result = sim.callScriptFunction(
+#             'getDenseScan', 
+#             script_handle
+#         )
 
-        self.wall_points = []
+#         if result and len(result) > 0 and len(result[0]) > 0:
+#             flat_points = result[0]
+#             # Reshape the flat [x1, y1, x2, y2, ...] list into an (N, 2) numpy array
+#             self.wall_points = np.array(flat_points, dtype=np.float32).reshape(-1, 2)
+#         else:
+#             self.wall_points = np.empty((0, 2), dtype=np.float32)
+
 
     # Get LiDAR point cloud from CopelliaSim
     # def get_lidar_points(self, sim, robot_handle):

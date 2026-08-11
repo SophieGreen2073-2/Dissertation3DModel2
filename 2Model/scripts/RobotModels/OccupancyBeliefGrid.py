@@ -351,7 +351,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         self.l_occ_lidar = 1.2   # Increase belief when wall is detected by forward lidar
         self.l_occ_vision = 0.7   # Increase belief when wall is detected by 360 degree vision cams 
 
-    def update_belief(self, sim, robot_handle, vision_fov_deg, 
+    def update_belief(self, sim, robot_handle, 
                       vision_max_range, forward_lidar_wall_points, 
                       vision_cam_wall_points, robot_pos, robot_orient):
         robot_x, robot_y, robot_yaw = robot_pos[0], robot_pos[1], robot_orient[2]
@@ -361,7 +361,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
 
         prob_grid = self.get_probability_grid()
 
-        self.update_vision_cam_belief(vision_fov_deg, vision_max_range, robot_x,
+        self.update_vision_cam_belief(vision_max_range, robot_x,
                                       robot_y, robot_yaw, sim, robot_handle, vision_cam_wall_points,
                                       prob_grid)
 
@@ -416,7 +416,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
 
     #         curr_angle += angular_resolution
 
-    def update_vision_cam_belief(self, fov_deg, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid):
+    def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid):
         uav_x, uav_y = self.grid_to_world(gx, gy)
         
         # Define your proximity sensor angles relative to the robot's heading (e.g., 8 sensors spaced every 45 degrees)
