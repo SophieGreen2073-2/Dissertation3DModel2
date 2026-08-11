@@ -376,85 +376,85 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
             self.belief_grid[valid_wall[1], valid_wall[0]] += self.l_occ_lidar
 
 
-    # def update_vision_cam_belief(self, fov_deg, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid):
-    #     # Define FOV half-angle
-    #     fov_deg = 360
-    #     half_fov = math.radians(fov_deg / 2.0)
-    #     angle_start = yaw - half_fov
-    #     angle_end = yaw + half_fov
-    #     curr_angle = angle_start
-
-    #     x, y = self.grid_to_world(gx, gy)
-
-    #     valid_walls = self.get_wall_points(wall_points)
-
-    #     angular_resolution = math.radians(1.0)
-    #     step_size = self.resolution * 0.5
-
-    #     # Loop through a bounding box around the drone corresponding to max_range
-    #     while curr_angle <= angle_end:
-    #         dist = step_size
-    #         while dist <= max_range:
-    #             # Convert grid cell back to world coordinates
-    #             wx = x + dist * math.cos(curr_angle)
-    #             wy = y + dist * math.sin(curr_angle)
-    #             c, r = self.world_to_grid(wx, wy)
-                
-    #             # Distance check
-    #             if not (0 <= c < self.width and 0 <= r < self.height):
-    #                 break
-
-    #             # CHeck if location is a wall, if yes move to next ray
-    #             if (r, c) in valid_walls or prob_grid[r, c] > 0.5:
-    #                 self.belief_grid[r, c] += self.l_occ_vision
-    #                 break
-    #             else:
-    #                 if self.belief_grid[r, c] <= 0:
-    #                     self.belief_grid[r, c] += self.l_free
-
-    #             dist += step_size
-
-    #         curr_angle += angular_resolution
-
     def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid):
-        uav_x, uav_y = self.grid_to_world(gx, gy)
-        
-        # Define your proximity sensor angles relative to the robot's heading (e.g., 8 sensors spaced every 45 degrees)
-        num_sensors = 8
-        sensor_angles = [yaw + i * (2.0 * math.pi / num_sensors) for i in range(num_sensors)]
+        # Define FOV half-angle
+        fov_deg = 350
+        half_fov = math.radians(fov_deg / 2.0)
+        angle_start = yaw - half_fov
+        angle_end = yaw + half_fov
+        curr_angle = angle_start
+
+        x, y = self.grid_to_world(gx, gy)
 
         valid_walls = self.get_wall_points(wall_points)
+
+        angular_resolution = math.radians(1.0)
         step_size = self.resolution * 0.5
 
-        # Cast a ray for each proximity sensor direction
-        for angle in sensor_angles:
-            ray_hit = False
-            hit_cell = None
-            
-            # Step along this specific ray
+        # Loop through a bounding box around the drone corresponding to max_range
+        while curr_angle <= angle_end:
             dist = step_size
             while dist <= max_range:
-                wx = uav_x + dist * math.cos(angle)
-                wy = uav_y + dist * math.sin(angle)
+                # Convert grid cell back to world coordinates
+                wx = x + dist * math.cos(curr_angle)
+                wy = y + dist * math.sin(curr_angle)
                 c, r = self.world_to_grid(wx, wy)
                 
-                # Distance boundary check
+                # Distance check
                 if not (0 <= c < self.width and 0 <= r < self.height):
                     break
 
-                # Check if this cell contains a wall detected by our sensors or belief grid
+                # CHeck if location is a wall, if yes move to next ray
                 if (r, c) in valid_walls or prob_grid[r, c] > 0.5:
-                    hit_cell = (r, c)
-                    ray_hit = True
+                    self.belief_grid[r, c] += self.l_occ_vision
                     break
                 else:
-                    # Only mark free space along this active ray if not already a confirmed wall
                     if self.belief_grid[r, c] <= 0:
                         self.belief_grid[r, c] += self.l_free
 
                 dist += step_size
 
-            # If the ray hit a wall, update that specific endpoint
-            if ray_hit and hit_cell:
-                r, c = hit_cell
-                self.belief_grid[r, c] += self.l_occ_vision
+            curr_angle += angular_resolution
+
+    # def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid):
+    #     uav_x, uav_y = self.grid_to_world(gx, gy)
+        
+    #     # Define your proximity sensor angles relative to the robot's heading (e.g., 8 sensors spaced every 45 degrees)
+    #     num_sensors = 8
+    #     sensor_angles = [yaw + i * (2.0 * math.pi / num_sensors) for i in range(num_sensors)]
+
+    #     valid_walls = self.get_wall_points(wall_points)
+    #     step_size = self.resolution * 0.5
+
+    #     # Cast a ray for each proximity sensor direction
+    #     for angle in sensor_angles:
+    #         ray_hit = False
+    #         hit_cell = None
+            
+    #         # Step along this specific ray
+    #         dist = step_size
+    #         while dist <= max_range:
+    #             wx = uav_x + dist * math.cos(angle)
+    #             wy = uav_y + dist * math.sin(angle)
+    #             c, r = self.world_to_grid(wx, wy)
+                
+    #             # Distance boundary check
+    #             if not (0 <= c < self.width and 0 <= r < self.height):
+    #                 break
+
+    #             # Check if this cell contains a wall detected by our sensors or belief grid
+    #             if (r, c) in valid_walls or prob_grid[r, c] > 0.5:
+    #                 hit_cell = (r, c)
+    #                 ray_hit = True
+    #                 break
+    #             else:
+    #                 # Only mark free space along this active ray if not already a confirmed wall
+    #                 if self.belief_grid[r, c] <= 0:
+    #                     self.belief_grid[r, c] += self.l_free
+
+    #             dist += step_size
+
+    #         # If the ray hit a wall, update that specific endpoint
+    #         if ray_hit and hit_cell:
+    #             r, c = hit_cell
+    #             self.belief_grid[r, c] += self.l_occ_vision

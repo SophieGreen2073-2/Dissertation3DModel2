@@ -38,7 +38,7 @@
             },
             "VisionSensor":{
                 "MinRange": 0.8,
-                "MaxRange": 10,
+                "MaxRange": 6,
                 "FovDegrees": 90
             }
         },
