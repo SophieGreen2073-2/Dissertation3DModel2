@@ -11,6 +11,9 @@ class AreaModel():
         parent_name = "/Walls"
         parent_handle = sim.getObject(parent_name)
 
+        self.wall_collection_handle = sim.createCollection(0)
+        sim.addItemToCollection(self.wall_collection_handle, sim.handle_tree, parent_handle, 0)
+
         # Get all shapes inside this branch
         wall_handles = sim.getObjectsInTree(parent_handle, sim.object_shape_type)
 

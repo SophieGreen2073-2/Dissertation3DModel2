@@ -178,6 +178,7 @@ class Simulation():
             ugv = UGVModel(robot_handle, left_motor, right_motor, self.sim,
                            self.UGVParams["Speed"], self.UGVParams["Sensors"],
                            self.UGVParams["Battery"], self.UGVParams["WallDangerZone"],
-                           self.Grid["Height"], self.Grid["Width"], self.Grid["Resolution"])
+                           self.Grid["Height"], self.Grid["Width"], self.Grid["Resolution"],
+                           )
 
             self.UGVs.append(ugv)

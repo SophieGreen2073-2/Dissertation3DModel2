@@ -664,9 +664,6 @@ class UGVModel():
 
         inflated_wall_belief = self.inflate_walls(wall_belief)
 
-        if end == (66, 54):
-            print("test")
-
         while(open_nodes):
             # Get open node with current lowest f score
             current_node = min(open_nodes, key=lambda node: f_score[node[1]][node[0]])
@@ -985,8 +982,8 @@ class UGVPerception(Node):
         global_points = np.dot(local_points, R.T) + np.array([pos[0], pos[1]], dtype=np.float32)
         self.wall_points = global_points
 
-        if len(self.wall_points):
-            print(f"Robot Pos: {pos[0]:.2f}, {pos[1]:.2f} | First Wall Point Global: {self.wall_points[0]}")
+        # if len(self.wall_points):
+            # print(f"Robot Pos: {pos[0]:.2f}, {pos[1]:.2f} | First Wall Point Global: {self.wall_points[0]}")
 
 
     def transform_to_global(self, local_points):

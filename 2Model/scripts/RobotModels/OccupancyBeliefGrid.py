@@ -396,7 +396,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         if len(wall_points) == 0:
             return
 
-        pos = self.sim.getObjectPosition(robot_handle, -1)
+        pos = sim.getObjectPosition(robot_handle, -1)
         robot_grid = self.world_to_grid(pos[0], pos[1])
         
         valid_wall = self.world_to_grid(wall_points[0], wall_points[1])
