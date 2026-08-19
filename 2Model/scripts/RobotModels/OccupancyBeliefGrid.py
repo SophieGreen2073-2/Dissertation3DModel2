@@ -357,8 +357,6 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         robot_x, robot_y, robot_yaw = robot_pos[0], robot_pos[1], robot_orient[2]
         
         # robot_col, robot_row = self.world_to_grid(robot_x, robot_y)
-        self.belief_grid[robot_y, robot_x] = -5 
-
         prob_grid = self.get_probability_grid()
 
         self.update_vision_cam_belief(vision_max_range, robot_x,
@@ -367,18 +365,52 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
 
         self.update_lidar_belief(sim, robot_handle, forward_lidar_wall_points)
 
+        self.belief_grid[robot_y, robot_x] = -5 
+
         # Ensure belief stays within bounds [l_min, l_max]
         np.clip(self.belief_grid, self.l_min, self.l_max, out=self.belief_grid)
 
+    def line_of_sight(self, x0, y0, x1, y1):
+        points = []
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+        
+        while True:
+            points.append((x0, y0))
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
+        return points
+
+
     def update_lidar_belief(self, sim, robot_handle, wall_points):
-        if len(wall_points) > 0:
-            valid_wall = self.world_to_grid(wall_points[0], wall_points[1])
-            self.belief_grid[valid_wall[1], valid_wall[0]] += self.l_occ_lidar
+        if len(wall_points) == 0:
+            return
+
+        pos = self.sim.getObjectPosition(robot_handle, -1)
+        robot_grid = self.world_to_grid(pos[0], pos[1])
+        
+        valid_wall = self.world_to_grid(wall_points[0], wall_points[1])
+        points = self.line_of_sight(robot_grid[0], robot_grid[1], valid_wall[0], valid_wall[1])
+
+        for p in points:
+            self.belief_grid[p[1], p[0]] += self.l_free
+
+        self.belief_grid[valid_wall[1], valid_wall[0]] += self.l_occ_lidar
 
 
     def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid):
         # Define FOV half-angle
-        fov_deg = 350
+        fov_deg = 360
         half_fov = math.radians(fov_deg / 2.0)
         angle_start = yaw - half_fov
         angle_end = yaw + half_fov
@@ -405,11 +437,11 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
                     break
 
                 # CHeck if location is a wall, if yes move to next ray
-                if (r, c) in valid_walls or prob_grid[r, c] > 0.5:
+                if (r, c) in valid_walls:
                     self.belief_grid[r, c] += self.l_occ_vision
                     break
                 else:
-                    if self.belief_grid[r, c] <= 0:
+                    if self.belief_grid[r, c] <= 2.5:
                         self.belief_grid[r, c] += self.l_free
 
                 dist += step_size

@@ -31,14 +31,14 @@
             "Acceleration": 2.5
         },
         "Sensors":{
-            "ScanFrequency": 2,
+            "ScanFrequency": 5,
             "LiDAR":{
                 "MaxRange": 24,
                 "MinRange": 0.8
             },
             "VisionSensor":{
                 "MinRange": 0.8,
-                "MaxRange": 6,
+                "MaxRange": 5.5,
                 "FovDegrees": 90
             }
         },

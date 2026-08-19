@@ -178,7 +178,7 @@ class UGVModel():
         if self.step_count % self.sensors.scan_frequency == 0:
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
-                                            10, 
+                                            self.max_vision_range, 
                                             self.sensors.forward_lidar.wall_points,
                                             self.sensors.lidar_spin.wall_points,
                                             curr_grid_pos, curr_orient)
@@ -391,21 +391,23 @@ class UGVModel():
         MapOpenList = {current_grid_pos}
         MapCloseList = set()
 
-        wall_belief = self.occupancy_grid.get_probability_grid()
-
         # if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
         self.sensors.get_points(self.sim, self.robot_handle)
         self.occupancy_grid.update_belief(self.sim, self.robot_handle,
-                                            10, 
+                                            self.max_vision_range, 
                                             self.sensors.forward_lidar.wall_points,
                                             self.sensors.lidar_spin.wall_points,
                                             current_grid_pos, curr_orient)
 
-        if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
+        wall_belief = self.occupancy_grid.get_probability_grid()
+
+        inflated_wall_belief = self.inflate_walls(wall_belief)
+
+        if inflated_wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
             return
 
-        # if current_grid_pos == (16, 72):
-        #     print("test")
+        # if current_grid_pos == (55, 50):
+            # print("test")
 
         # Go through each position until frontier found
         while len(queue) != 0 and len(frontiers_found) <= self.frontier_count:
@@ -413,7 +415,7 @@ class UGVModel():
             # self.prev_end_target = (cc, cr)
 
             # If p has not been visited, or likely a wall
-            if (cc, cr) in MapCloseList or wall_belief[cr, cc] >= 0.4:
+            if (cc, cr) in MapCloseList or inflated_wall_belief[cr, cc] >= 0.4:
                 continue
 
             # Check if the frontier is in the failed list
@@ -429,7 +431,7 @@ class UGVModel():
                 dist_to_target = math.hypot(step_dir[0], step_dir[1])
 
                 if dist_to_target > self.min_vision_range:
-                    if wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
+                    if inflated_wall_belief[current_grid_pos[1], current_grid_pos[0]] == 0.5:
                         frontiers_found.append((cc, cr))
                         break
 
@@ -450,7 +452,7 @@ class UGVModel():
                 if 0<= adj_point[0] < self.occupancy_grid.width and 0 <= adj_point[1] < self.occupancy_grid.height:
                     if adj_point not in MapOpenList and adj_point not in MapCloseList:
                         
-                        if wall_belief[adj_point[1], adj_point[0]] < 0.5:
+                        if inflated_wall_belief[adj_point[1], adj_point[0]] < 0.5:
                             queue.append(adj_point)
                             MapOpenList.add(adj_point)
             
@@ -518,7 +520,7 @@ class UGVModel():
             self.occupancy_grid.belief_grid[current_grid_pos[1], current_grid_pos[0]] = -5
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
-                                            10, 
+                                            self.max_vision_range, 
                                             self.sensors.forward_lidar.wall_points,
                                             self.sensors.lidar_spin.wall_points,
                                             current_grid_pos, curr_orient)
@@ -621,7 +623,27 @@ class UGVModel():
             current = preceeding_nodes[current]
 
         return path
-    
+
+
+    # Inflate walls by two squares in each direction to keep the robot away from it
+    def inflate_walls(self, wall_belief):
+        height, width = wall_belief.shape
+
+        new_wall_belief = wall_belief.copy()
+        inflation_radius = 2
+
+        for r in range(height):
+            for c in range(width):
+                if wall_belief[r, c] > 0.6:
+                    for dr in range(-inflation_radius, inflation_radius + 1):
+                        for dc in range(-inflation_radius, inflation_radius + 1):
+                            nr, nc = r + dr, c + dc
+
+                            if 0 <= nr < height and 0 <= nc < width:
+                                if new_wall_belief[nr, nc] < 0.6:
+                                    new_wall_belief[nr, nc] = 0.85
+
+        return new_wall_belief
 
     # A* algorithm
     def do_a_star(self, start, end, is_find_destination):
@@ -639,6 +661,8 @@ class UGVModel():
         directions = ['north', 'south', 'east', 'west', 'north_east', 'south_east', 'south_west', 'north_west']
 
         wall_belief = self.occupancy_grid.get_probability_grid()
+
+        inflated_wall_belief = self.inflate_walls(wall_belief)
 
         if end == (66, 54):
             print("test")
@@ -676,7 +700,7 @@ class UGVModel():
                 #     if (neighbour_node[0] < 0 or neighbour_node[1] < 0 or neighbour_node[0] >= self.occupancy_grid.width or neighbour_node[1] >= self.occupancy_grid.height or wall_belief[neighbour_node[1]][neighbour_node[0]] > 0.6):
                 #         continue
 
-                cell_belief = wall_belief[neighbour_node[1]][neighbour_node[0]]
+                cell_belief = inflated_wall_belief[neighbour_node[1]][neighbour_node[0]]
                 if cell_belief > 0.4:
                     continue
 
@@ -690,7 +714,7 @@ class UGVModel():
                                   min(self.occupancy_grid.height, neighbour_node[1] + clearance_cells + 1)):
                     for nx in range(max(0, neighbour_node[0] - clearance_cells), 
                                       min(self.occupancy_grid.width, neighbour_node[0] + clearance_cells + 1)):
-                        if wall_belief[ny][nx] > 0.4:
+                        if inflated_wall_belief[ny][nx] > 0.4:
                             near_wall = True
                             break
                     if near_wall:
@@ -712,6 +736,7 @@ class UGVModel():
                     # Add neighbour to open nodes if not already there
                     if(neighbour_node not in open_nodes):
                         open_nodes.append(neighbour_node)
+
 
     # Change path to be be end points of full direction movement
     def prune_path(self, path):
@@ -833,7 +858,7 @@ class Sensors():
     
         # self.vision_sensor.get_lidar_point(sim)
 
-        rclpy.spin_once(self.lidar_spin, timeout_sec=0.1)
+        rclpy.spin_once(self.lidar_spin, timeout_sec=0.0)
         
         # Get the points directly ahead of the forward lidar (accurate sensing)
         self.forward_lidar.get_lidar_point(sim)
@@ -870,53 +895,129 @@ class UGVPerception(Node):
             LaserScan,
             '/scan',
             self.listener_callback,
-            10
+            1
         )
         self.wall_points = np.empty((0, 2), dtype=np.float32)
         self.robot_handle = robot_handle
         self.sim = sim
 
+        self.prev_pos = self.sim.getObjectPosition(self.robot_handle, -1)
+        self.prev_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
+
+    # def listener_callback(self, msg):
+    #     wall_points = []
+    #     angle = msg.angle_min
+
+    #     min_valid_range = 0.8
+
+    #     pos_start = self.prev_pos
+    #     orient_start = self.prev_orient
+
+    #     pos_end = self.sim.getObjectPosition(self.robot_handle, -1)
+    #     orient_end = self.sim.getObjectOrientation(self.robot_handle, -1)
+
+    #     self.prev_pos = pos_end
+    #     self.prev_orient = orient_end
+    #     num_ranges = len(msg.ranges)
+
+    #     for i, r in enumerate(msg.ranges):
+    #         if min_valid_range < r < msg.range_max:
+    #            # 2. Interpolate the angle based on the ray index (i)
+    #             # This treats the scan as a progressive sweep rather than an instant snapshot
+    #             fraction = i / num_ranges
+    #             angle = msg.angle_min + (i * msg.angle_increment)
+                
+    #             # Interpolated Yaw (The crucial part to stop the smearing)
+    #             yaw = orient_start[2] + fraction * (orient_end[2] - orient_start[2])
+                
+    #             # Local coords
+    #             lx = r * np.cos(angle)
+    #             ly = r * np.sin(angle)
+                
+    #             # 3. Rotate using the interpolated yaw
+    #             c, s = np.cos(yaw), np.sin(yaw)
+    #             gx = pos_start[0] + (lx * c - ly * s)
+    #             gy = pos_start[1] + (lx * s + ly * c)
+                
+    #             wall_points.append([gx, gy])
+    #         # angle += msg.angle_increment
+
+    #     # if wall_points:
+    #     #     local_points = np.array(wall_points, dtype=np.float32)
+    #     # else:
+    #     #     local_points = np.empty((0, 2), dtype=np.float32)
+
+    #     # self.wall_points = self.transform_to_global(local_points)
+
+    #     self.wall_points = np.array(wall_points, dtype=np.float32)
+
+        # if len(self.wall_points):
+            # print(f"Robot Pos: {pos_end[0]:.2f}, {pos_end[1]:.2f} | First Wall Point Global: {self.wall_points[0]}")
+
     def listener_callback(self, msg):
-        wall_points = []
-        angle = msg.angle_min
+        ranges = np.array(msg.ranges, dtype=np.float32)
+        angles = np.linspace(msg.angle_min, msg.angle_max, len(ranges))
+        
+        min_valid_range = 0.8
+        valid_mask = (ranges > min_valid_range) & (ranges < msg.range_max)
+        
+        if not np.any(valid_mask):
+            self.wall_points = np.empty((0, 2), dtype=np.float32)
+            return
 
-        for r in msg.ranges:
-            if msg.range_min < r < msg.range_max:
-                x = r * np.cos(angle)
-                y = r * np.sin(angle)
-                wall_points.append([x, y])
-            angle += msg.angle_increment
+        r_valid = ranges[valid_mask]
+        a_valid = angles[valid_mask]
+        
+        # 1. Compute local 2D points from polar ranges
+        lx = r_valid * np.cos(a_valid)
+        ly = r_valid * np.sin(a_valid)
+        local_points = np.stack((lx, ly), axis=-1)
 
-        if wall_points:
-            local_points = np.array(wall_points, dtype=np.float32)
-        else:
-            local_points = np.empty((0, 2), dtype=np.float32)
+        # 2. Get the robot's current pose right now (since the scan is instantaneous)
+        pos = self.sim.getObjectPosition(self.robot_handle, -1)
+        orient = self.sim.getObjectOrientation(self.robot_handle, -1)
+        yaw = orient[2]
 
-        robot_pos = self.sim.getObjectPosition(self.robot_handle, -1)
-        robot_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
-
-        self.wall_points = self.transform_to_global(local_points)
+        # 3. Rotate and translate all points at once using the current yaw
+        c, s = np.cos(yaw), np.sin(yaw)
+        R = np.array([[c, -s], [s, c]], dtype=np.float32)
+        
+        global_points = np.dot(local_points, R.T) + np.array([pos[0], pos[1]], dtype=np.float32)
+        self.wall_points = global_points
 
         if len(self.wall_points):
-            print(f"Robot Pos: {robot_pos[0]:.2f}, {robot_pos[1]:.2f} | First Wall Point Global: {self.wall_points[0]}")
+            print(f"Robot Pos: {pos[0]:.2f}, {pos[1]:.2f} | First Wall Point Global: {self.wall_points[0]}")
 
 
     def transform_to_global(self, local_points):
         if len(local_points) == 0:
             return np.empty((0, 2), dtype=np.float32)
 
-        robot_pos = self.sim.getObjectPosition(self.robot_handle, -1)
-        robot_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
+        # robot_pos = self.sim.getObjectPosition(self.robot_handle, -1)
+        # robot_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
 
-        # Flip the sign of the yaw angle if your map frame uses an inverted rotation convention
-        yaw = -robot_orient[2] 
+        cam_handle = self.sim.getObject('/PioneerP3DX/Hokuyo')
+        sensor_matrix = self.sim.getObjectMatrix(cam_handle, -1)
 
-        c, s = np.cos(yaw), np.sin(yaw)
-        R = np.array(((c, -s), (s, c)), dtype=np.float32)
+        R_2d = np.array([
+            [sensor_matrix[0], sensor_matrix[1]],
+            [sensor_matrix[4], sensor_matrix[5]]
+        ], dtype=np.float32)
+        
+        T_2d = np.array([sensor_matrix[3], sensor_matrix[7]], dtype=np.float32)
 
-        # Rotate local points and translate by global robot position
-        global_points = np.dot(local_points, R.T) + np.array([robot_pos[0], robot_pos[1]], dtype=np.float32)
-        return global_points
+        # Vectorized transformation in pure NumPy (bypasses ZMQ serialization errors and loop overhead)
+        global_points = np.dot(local_points, R_2d.T) + T_2d
+
+        # # Flip the sign of the yaw angle if your map frame uses an inverted rotation convention
+        # yaw = -robot_orient[2] 
+
+        # c, s = np.cos(yaw), np.sin(yaw)
+        # R = np.array(((c, -s), (s, c)), dtype=np.float32)
+
+        # # Rotate local points and translate by global robot position
+        # global_points = np.dot(local_points, R.T) + np.array([robot_pos[0], robot_pos[1]], dtype=np.float32)
+        return np.array(global_points, dtype=np.float32)
             
 
 # class VisionSensor():

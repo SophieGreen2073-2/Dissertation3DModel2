@@ -42,3 +42,5 @@ class AreaModel():
             }
 
             self.walls.append(wall_info)
+
+        return
