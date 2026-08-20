@@ -129,7 +129,7 @@ class UGVModel():
             is_battery_remaining = self.battery.check_battery_remaining(self.danger_speed, len(path) * self.area.resolution)
             if not is_battery_remaining:
                 self.steps_queue.clear()
-                self.steps_queue = path
+                self.steps_queue = deque(path)
                 self.steps_completed = False
                 self.is_returning_home = True
 
@@ -829,8 +829,8 @@ class Battery():
     def check_battery_remaining(self, speed, distance):
         steps_time = distance / speed
         if steps_time > self.life - self.mission_time - 60:
-            return True
-        return False 
+            return False
+        return True
 
 
 class Sensors():

@@ -49,19 +49,27 @@ class RecordRedundancy():
             writer.writerow(row)
 
 class RecordScannedGrid():
-    def save_final_grids(self, ugvs):
-        grid_data = {}
-        
-        for i, ugv in enumerate(ugvs):
-            # Flatten the 2D grid to 1D
-            flattened_grid = ugv.occupancy_grid.belief_grid.flatten()
-            grid_data[f'UGV_{i}'] = flattened_grid
-        
-        # Create DataFrame: robots as rows, grid cells as columns
-        df = pd.DataFrame.from_dict(grid_data, orient='index')
-        df.index.name = 'Robot_ID'
-        
-        # Export to Excel
-        df.to_excel("Final_Robot_Grids.xlsx")
-        print("Final occupancy grids saved to Final_Robot_Grids.xlsx")
-        
+    def save_final_grids(self, ugvs, ugv_params):
+        with open('dissertation_scanned_grids_record.csv', 'a', newline='') as f:
+            writer = csv.writer(f)
+            
+            for i, ugv in enumerate(ugvs):
+                # 1. Start the row with the robot's identifier/index
+                row = [int(i)]
+                
+                # 2. Append the flattened grid values
+                flattened_grid = ugv.occupancy_grid.belief_grid.flatten()
+                for val in flattened_grid:
+                    row.append(f"{float(val):.6f}")
+                
+                # 3. Extract and append parameters matching the other record classes
+                for param in ugv_params.values():
+                    if isinstance(param, float):
+                        row.append(f"{param:.6f}")
+                    elif isinstance(param, (int, bool)):
+                        row.append(int(param))
+                    else:
+                        row.append(str(param))
+                
+                # 4. Write this robot's complete row to the CSV
+                writer.writerow(row)

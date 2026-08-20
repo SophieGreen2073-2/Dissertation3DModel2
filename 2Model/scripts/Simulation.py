@@ -44,34 +44,34 @@ class Simulation():
 
             self.client.step()
 
-            # try:
-            while True:
-                self.completed = True
-                self.client.step()
+            try:
+                while True:
+                    self.completed = True
+                    self.client.step()
 
-                # Check if simulation was stopped manually from GUI or script
-                if self.sim.getSimulationState() == self.sim.simulation_stopped:
-                    break
+                    # Check if simulation was stopped manually from GUI or script
+                    if self.sim.getSimulationState() == self.sim.simulation_stopped:
+                        break
 
-                self.sim_time = self.sim.getSimulationTime()
+                    self.sim_time = self.sim.getSimulationTime()
 
-                for ugv in self.UGVs:
-                    # uav.scan()
-                    if not ugv.steps_queue:
-                        ugv.yamauchi_move_utility_function(self.area)
-                    else:
-                        ugv.step_robot(self.area)
-                    self.completed &= ugv.completed
+                    for ugv in self.UGVs:
+                        # uav.scan()
+                        if not ugv.steps_queue:
+                            ugv.yamauchi_move_utility_function(self.area)
+                        else:
+                            ugv.step_robot(self.area)
+                        self.completed &= ugv.completed
 
-                if self.completed:
-                    break
-            # except Exception:
-            #     print(Exception)
-            # finally:
-            #     self.sim.stopSimulation()
-            #     record_time.record_time_elapsed(self.num_ugvs, self.sim.getSimulationTime(), self.UGVParams)
-            #     record_redundancy.record_overlap(self.area.overlap_area, self.num_ugvs, self.UGVParams)
-            #     record_scanned_grid.save_final_grids(self.UGVs)
+                    if self.completed:
+                        break
+            except Exception:
+                print(Exception)
+            finally:
+                self.sim.stopSimulation()
+                record_time.record_time_elapsed(self.num_ugvs, self.sim.getSimulationTime(), self.UGVParams)
+                record_redundancy.record_overlap(self.area.overlap_area, self.num_ugvs, self.UGVParams)
+                record_scanned_grid.save_final_grids(self.UGVs)
         
 
     # Get simulation parameters
