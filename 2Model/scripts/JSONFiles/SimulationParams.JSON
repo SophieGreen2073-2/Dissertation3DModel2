@@ -44,7 +44,8 @@
         },
         "Battery":{
             "Life": 2400,
-            "ChargeTime": 3600
+            "ChargeTime": 3600,
+            "RechargePoint": [6, 11]
         },
         "Communications":{
             "TransmitPower": 23,

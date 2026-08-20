@@ -2,10 +2,12 @@ from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import numpy as np
 
 class AreaModel():
-    def __init__(self, sim):
+    def __init__(self, sim, height, width, num_ugvs, resolution):
         print("Build area model")
 
         self.walls = []
+        self.resolution = resolution
+        self.overlap_area = np.zeros((height * resolution, width * resolution, num_ugvs))
 
         # Get parent object
         parent_name = "/Walls"

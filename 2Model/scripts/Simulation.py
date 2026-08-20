@@ -3,6 +3,7 @@ from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import numpy as np
 import os
 import json
+import math
 from Record import RecordRedundancy, RecordTime
 from RobotModels.UAVModel import UAVModel
 from RobotModels.UGVModel import UGVModel
@@ -28,7 +29,7 @@ class Simulation():
             num_legged = run["NumLegged"]
 
             # Get walls within the area
-            self.area = AreaModel(self.sim)
+            self.area = AreaModel(self.sim, self.Grid["Height"], self.Grid["Width"], self.num_ugvs, self.Grid["Resolution"])
 
             # Create list of active UAVs
             self.CreateQuadcopterList()
@@ -56,39 +57,18 @@ class Simulation():
                 for ugv in self.UGVs:
                     # uav.scan()
                     if not ugv.steps_queue:
-                        ugv.yamauchi_move_utility_function()
+                        ugv.yamauchi_move_utility_function(self.area)
                     else:
-                        ugv.step_robot()
+                        ugv.step_robot(self.area)
                     self.completed &= ugv.completed
 
                 if self.completed:
                     break
 
-            # except Exception as e:
-            #     print(f"Simulation run interrupted: {e}")
-
-            # finally:
-                # 4. Clean up between runs
             self.sim.stopSimulation()
-                    
 
-            # while(True):
-            #     self.completed = True
-            #     for uav in self.UAVs:
-            #         if not uav.released and round(self.time_elapsed, 1) == round((uav.robot_id - self.startRobotIDs), 1) * self.UAVParams["ReleaseDelay"]:
-            #             uav.released = True
-            #         if uav.steps_completed and uav.released:
-            #             uav.yamauchi_move_utility_function(self.area, self.startRobotIDs)
-            #         self.completed &= uav.completed
-
-            #     if self.completed:
-            #         break
-            #     self.StepRobots()
-
-            # record_time.record_time_elapsed(num_uavs, self.time_elapsed, self.UAVParams)
-            # record_redundancy.record_overlap(self.area.overlap_area, num_uavs, self.UAVParams)
-
-            # sim.stopSimulation()
+            record_time.record_time_elapsed(self.num_ugvs, self.time_elapsed, self.UGVParams)
+            record_redundancy.record_overlap(self.area.overlap_area, self.num_ugvs, self.UGVParams)
         
 
     # Get simulation parameters
@@ -110,7 +90,7 @@ class Simulation():
 
     # Calculate total dBm for communication between robots
     def CalculateTotalLinkBudget(self):
-        comms_params = self.UAVParams["Communications"]
+        comms_params = self.UGVParams["Communications"]
 
         # Get params used to model wifi communication
         transmit_power = comms_params["TransmitPower"]
@@ -179,6 +159,76 @@ class Simulation():
                            self.UGVParams["Speed"], self.UGVParams["Sensors"],
                            self.UGVParams["Battery"], self.UGVParams["WallDangerZone"],
                            self.Grid["Height"], self.Grid["Width"], self.Grid["Resolution"],
-                           )
+                           self.area, index)
 
             self.UGVs.append(ugv)
+
+    # Calculate if transmission is possible between two UAVs
+    def Is_Transmission_Possible(self, uav1: UAVModel, uav2: UAVModel):
+        # Check params
+        step = 0.1
+        epsilon = 1e-9
+
+        # Difference between uav1 and uav2
+        dx = uav2.x_pos - uav1.x_pos
+        dy = uav2.y_pos - uav1.y_pos
+        total_dist = math.hypot(dx, dy)
+
+        # Drones are at the exact same point
+        if total_dist < 1e-6:
+            return True
+
+        # Distance from uav1 to check point
+        step = 0.1  # Step resolution in grid units
+        num_steps = int(math.ceil(total_dist / step))
+        
+        # Normalized direction vector per step
+        step_x = (dx / total_dist) * step
+        step_y = (dy / total_dist) * step
+        x_pos = uav1.x_pos
+        y_pos = uav1.y_pos
+
+        # Moniter the amount of free space and wall space between the drones
+        free_space = 0
+        wall_space = 0
+
+        # Check along line until reaching other uav2
+        for i in range(num_steps):
+            grid_x = int(round(x_pos + epsilon))
+            grid_y = int(round(y_pos + epsilon))
+
+            # Boundary check safeguard before array lookup
+            if 0 <= grid_y < self.area.grid.shape[0] and 0 <= grid_x < self.area.grid.shape[1]:
+                if self.area.grid[grid_y, grid_x] == 1:
+                    wall_space += step
+                else:
+                    free_space += step
+            else:
+                # Out of bounds grid cell treated as free space (or wall depending on your sim rules)
+                free_space += step
+
+            # Advance along ray
+            x_pos += step_x
+            y_pos += step_y
+
+        comms_params = self.UAVParams["Communications"]
+
+        # Get params used to model wifi communication
+        frequency = comms_params["Frequency"]
+        concrete_loss = comms_params["ConcreteLoss"]
+        
+        total_required = self.ConcreteLoss(wall_space, concrete_loss) + self.CalculateFreeSpaceLoss(free_space, frequency)
+
+        return self.total_link_budget > total_required
+
+
+    # Calculate signal loss through the amount of wall
+    def ConcreteLoss(self, wall_space, concrete_loss):
+        return wall_space * concrete_loss
+
+    # Calculate signal loss through the free space
+    def CalculateFreeSpaceLoss(self, free_space_dist, frequency):
+        if free_space_dist <= 0.001:
+            return 0.0
+
+        return 20 * math.log10(free_space_dist / 1000) + 20 * math.log10(frequency) + 32.45

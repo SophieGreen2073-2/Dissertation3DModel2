@@ -353,7 +353,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
 
     def update_belief(self, sim, robot_handle, 
                       vision_max_range, forward_lidar_wall_points, 
-                      vision_cam_wall_points, robot_pos, robot_orient):
+                      vision_cam_wall_points, robot_pos, robot_orient, area_model):
         robot_x, robot_y, robot_yaw = robot_pos[0], robot_pos[1], robot_orient[2]
         
         # robot_col, robot_row = self.world_to_grid(robot_x, robot_y)
@@ -361,9 +361,9 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
 
         self.update_vision_cam_belief(vision_max_range, robot_x,
                                       robot_y, robot_yaw, sim, robot_handle, vision_cam_wall_points,
-                                      prob_grid)
+                                      prob_grid, area_model)
 
-        self.update_lidar_belief(sim, robot_handle, forward_lidar_wall_points)
+        self.update_lidar_belief(sim, robot_handle, forward_lidar_wall_points, area_model)
 
         self.belief_grid[robot_y, robot_x] = -5 
 
@@ -392,7 +392,7 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         return points
 
 
-    def update_lidar_belief(self, sim, robot_handle, wall_points):
+    def update_lidar_belief(self, sim, robot_handle, wall_points, area_model, robot_id):
         if len(wall_points) == 0:
             return
 
@@ -404,11 +404,13 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
 
         for p in points:
             self.belief_grid[p[1], p[0]] += self.l_free
+            area_model.overlap_area[p[1], p[0], robot_id] += 1
 
         self.belief_grid[valid_wall[1], valid_wall[0]] += self.l_occ_lidar
+        area_model.overlap_area[valid_wall[1], valid_wall[0], robot_id] += 1
 
 
-    def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid):
+    def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid, area_model, robot_id):
         # Define FOV half-angle
         fov_deg = 360
         half_fov = math.radians(fov_deg / 2.0)
@@ -439,10 +441,12 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
                 # CHeck if location is a wall, if yes move to next ray
                 if (r, c) in valid_walls:
                     self.belief_grid[r, c] += self.l_occ_vision
+                    area_model.overlap_area[r, c, robot_id] += 1
                     break
                 else:
                     if self.belief_grid[r, c] <= 2.5:
                         self.belief_grid[r, c] += self.l_free
+                        area_model.overlap_area[r, c, robot_id] += 1 
 
                 dist += step_size
 

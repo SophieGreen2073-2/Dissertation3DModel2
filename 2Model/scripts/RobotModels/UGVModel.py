@@ -9,7 +9,7 @@ from sensor_msgs.msg import LaserScan
 class UGVModel():
     def __init__(self, robot_handle, left_motor, right_motor, sim, speed_params,
                  sensor_params, battery_params, wall_danger_zone, grid_height,
-                 grid_width, resolution):
+                 grid_width, resolution, area_model, robot_id):
 
         # Simulation
         self.sim = sim
@@ -21,6 +21,7 @@ class UGVModel():
         self.is_scanning_in_place = False
         self.moved = False
         self.is_locked_dir = False
+        self.robot_id = robot_id
 
         # Robot handle names
         self.robot_handle = robot_handle
@@ -33,6 +34,9 @@ class UGVModel():
         self.start_speed = speed_params["Start"]
         self.acceleration = speed_params["Acceleration"]
         self.steering_gain = 1
+
+        # Area model
+        self.area = area_model
 
         # Robot paths
         self.steps_queue = deque()
@@ -68,6 +72,8 @@ class UGVModel():
 
         # Step count
         self.step_count = 0
+        self.dt = self.sim.getSimulationTimeStep()
+
 
     # Check if target should be moved to next target 
     def get_lookahead_target(self, curr_pos, lookahead_dist):
@@ -96,13 +102,38 @@ class UGVModel():
         return self.occupancy_grid.grid_to_world(target_wp[0], target_wp[1])
     
 
-    def step_robot(self):
+    def step_robot(self, area_model):
         curr_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
         curr_grid_pos = self.occupancy_grid.world_to_grid(curr_pos[0], curr_pos[1])
 
         wall_belief = self.occupancy_grid.get_probability_grid()
 
+        # If the robot is at the charge point the increase charge time
+        if curr_grid_pos == tuple(self.battery.recharge_point) and self.is_returning_home:
+            self.battery.charge_time_elapsed += self.dt
+            if self.battery.charge_time_elapsed >= self.battery.charge_time:
+                self.battery.mission_time = 0
+                self.steps_queue.clear()
+                self.steps_completed = True
+                self.is_returning_home = False
+            return
+
+        # Increment mission time
+        self.battery.mission_time += self.dt
+
+        # Check that the robot has enough battery life to continue
+        if not self.is_returning_home:
+            path = self.do_a_star(curr_grid_pos, tuple(self.battery.recharge_point), False)
+            if path == None: return
+            is_battery_remaining = self.battery.check_battery_remaining(self.danger_speed, len(path) * self.area.resolution)
+            if not is_battery_remaining:
+                self.steps_queue.clear()
+                self.steps_queue = path
+                self.steps_completed = False
+                self.is_returning_home = True
+
+        # If steps queue empty then create new path
         if not self.steps_queue:
             self.steps_completed = True
             return
@@ -115,13 +146,13 @@ class UGVModel():
             return
         
         target_wx, target_wy = self.get_lookahead_target(curr_pos, lookahead_dist=1)
-        
-        # 1. Compute distance and desired angle to target
+
+        # Compute distance to target        
         dx = target_wx - curr_pos[0]
         dy = target_wy - curr_pos[1]
         distance = math.hypot(dx, dy)
-        
-        # Check if we have arrived (e.g., within 20cm)
+
+        # Check if the robot is close enough to target to move to next target
         if distance < 1:
             if len(self.steps_queue) == 1:
                 final_wp = self.steps_queue[0]
@@ -133,12 +164,9 @@ class UGVModel():
 
         desired_angle = math.atan2(dy, dx)
         
-        # 2. Compute normalized heading error strictly between -pi and pi
         heading_error = math.atan2(math.sin(desired_angle - curr_orient[2]), 
                                 math.cos(desired_angle - curr_orient[2]))
         
-        # 3. Behavior Switch: Turn-in-place vs. Drive-and-steer
-        # If the robot is pointing too far away from the target, pivot in place first
         if abs(heading_error) > 0.35:  # Roughly 20 degrees threshold
             # Pure rotation in place
             turn_speed = max(-self.top_speed, min(self.top_speed, heading_error * 1.5))
@@ -161,19 +189,6 @@ class UGVModel():
         self.sim.setJointTargetVelocity(self.left_motor, left_speed)
         self.sim.setJointTargetVelocity(self.right_motor, right_speed)
 
-
-        # Check if the robot is close to the target
-        # if self.is_scanning_in_place:
-        #     if abs(angle_diff) < 0.05:
-        #         self.steps_queue.clear()
-        #         self.steps_completed = True
-        # else:
-        # final_wp = self.steps_queue[-1]
-        # final_wx, final_wy = self.occupancy_grid.grid_to_world(final_wp[0], final_wp[1])
-        # if math.hypot(final_wx - curr_pos[0], final_wy - curr_pos[1]) < 0.25:
-        #     self.steps_queue.clear()
-        #     self.steps_completed = True
-
         # Scan and update belief
         if self.step_count % self.sensors.scan_frequency == 0:
             self.sensors.get_points(self.sim, self.robot_handle)
@@ -181,7 +196,7 @@ class UGVModel():
                                             self.max_vision_range, 
                                             self.sensors.forward_lidar.wall_points,
                                             self.sensors.lidar_spin.wall_points,
-                                            curr_grid_pos, curr_orient)
+                                            curr_grid_pos, curr_orient, area_model, self.robot_id)
 
         # Increase number of steps
         self.step_count += 1
@@ -378,7 +393,7 @@ class UGVModel():
 
 
     # Yamauchi frontier algorithm that uses a utility function to choose the target point
-    def yamauchi_move_utility_function(self):
+    def yamauchi_move_utility_function(self, area_model):
         current_world_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         current_grid_pos = self.occupancy_grid.world_to_grid(current_world_pos[0], current_world_pos[1])
         curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
@@ -397,7 +412,7 @@ class UGVModel():
                                             self.max_vision_range, 
                                             self.sensors.forward_lidar.wall_points,
                                             self.sensors.lidar_spin.wall_points,
-                                            current_grid_pos, curr_orient)
+                                            current_grid_pos, curr_orient, area_model, self.robot_id)
 
         wall_belief = self.occupancy_grid.get_probability_grid()
 
@@ -481,23 +496,14 @@ class UGVModel():
         step_dir = (target_world_position[0] - current_world_pos[0], target_world_position[1] - current_world_pos[1])
         dist_to_target = math.hypot(step_dir[0], step_dir[1])
 
-        # is_line_of_sight = self.occupancy_grid.is_line_of_sight(current_grid_pos[0], current_grid_pos[1], dest_location[0], dest_location[1])
-
-        # If the target is within the max scan range then scan in place
-        # if dist_to_target < self.max_vision_range * 0.98 and is_line_of_sight and dest_location != self.prev_target:
-        #     self.is_scanning_in_place = True
-        #     self.steps_queue.append(dest_location)
-        # else:
-            # Generate path to target
         self.do_a_star(current_grid_pos, dest_location, True)
-        # self.is_scanning_in_place = False
 
         if len(self.steps_queue) != 0:
             self.steps_completed = False
 
 
     # Frontier based search
-    def yamauchi_move_create_full_frontier(self):
+    def yamauchi_move_create_full_frontier(self, area_model):
         robot_world_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         current_grid_pos = self.occupancy_grid.world_to_grid(robot_world_pos[0], robot_world_pos[1])
         curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
@@ -523,7 +529,7 @@ class UGVModel():
                                             self.max_vision_range, 
                                             self.sensors.forward_lidar.wall_points,
                                             self.sensors.lidar_spin.wall_points,
-                                            current_grid_pos, curr_orient)
+                                            current_grid_pos, curr_orient, area_model, self.robot_id)
             
             return
 
@@ -687,15 +693,10 @@ class UGVModel():
                 neighbour_node = (current_node[0] + dx, current_node[1] + dy)
 
                 # If the robot is returning home then only return along already scanned paths
-                # if is_find_destination:
-                    # Check that the neighbour is within the grid and not a wall
                 if (neighbour_node[0] < 0 or neighbour_node[1] < 0 or 
                     neighbour_node[0] >= self.occupancy_grid.width or 
                     neighbour_node[1] >= self.occupancy_grid.height):
                     continue
-                # else:
-                #     if (neighbour_node[0] < 0 or neighbour_node[1] < 0 or neighbour_node[0] >= self.occupancy_grid.width or neighbour_node[1] >= self.occupancy_grid.height or wall_belief[neighbour_node[1]][neighbour_node[0]] > 0.6):
-                #         continue
 
                 cell_belief = inflated_wall_belief[neighbour_node[1]][neighbour_node[0]]
                 if cell_belief > 0.4:
@@ -819,6 +820,16 @@ class Battery():
     def __init__(self, battery_params):
         self.life = battery_params["Life"]
         self.charge_time = battery_params["ChargeTime"]
+        self.recharge_point = battery_params["RechargePoint"]
+
+        self.mission_time = 0
+        self.charge_time_elapsed = 0
+
+    def check_battery_remaining(self, speed, distance):
+        steps_time = distance / speed
+        if steps_time > self.life - self.mission_time - 60:
+            return True
+        return False 
 
 
 class Sensors():
@@ -831,30 +842,8 @@ class Sensors():
 
         self.lidar_spin = UGVPerception(robot_handle, sim)
 
-        # 360 SLAM
-        # self.slam_sensors = []
-        # for i in range(8): self.slam_sensors.append(VisionSensor(sensor_params["VisionSensor"], robot_handle, i + 1, sim))
-        # self.vision_wall_points = []
-        # self.vision_sensor = VisionSensor(sensor_params["VisionSensor"], robot_handle, sim)
-
 
     def get_points(self, sim, robot_handle):
-        all_points = []
-
-        # Get each of the wall points scanned by the camera sensors
-        # for cam in self.slam_sensors:
-        #     cam.get_lidar_point(sim)
-
-        #     if cam.wall_points is not None and len(cam.wall_points) > 0:
-        #         all_points.append(cam.wall_points)
-
-        # if all_points:
-        #     self.vision_wall_points = np.vstack(all_points)
-        # else:
-        #     self.vision_wall_points = np.array([])
-    
-        # self.vision_sensor.get_lidar_point(sim)
-
         rclpy.spin_once(self.lidar_spin, timeout_sec=0.0)
         
         # Get the points directly ahead of the forward lidar (accurate sensing)
@@ -901,56 +890,7 @@ class UGVPerception(Node):
         self.prev_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         self.prev_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
 
-    # def listener_callback(self, msg):
-    #     wall_points = []
-    #     angle = msg.angle_min
-
-    #     min_valid_range = 0.8
-
-    #     pos_start = self.prev_pos
-    #     orient_start = self.prev_orient
-
-    #     pos_end = self.sim.getObjectPosition(self.robot_handle, -1)
-    #     orient_end = self.sim.getObjectOrientation(self.robot_handle, -1)
-
-    #     self.prev_pos = pos_end
-    #     self.prev_orient = orient_end
-    #     num_ranges = len(msg.ranges)
-
-    #     for i, r in enumerate(msg.ranges):
-    #         if min_valid_range < r < msg.range_max:
-    #            # 2. Interpolate the angle based on the ray index (i)
-    #             # This treats the scan as a progressive sweep rather than an instant snapshot
-    #             fraction = i / num_ranges
-    #             angle = msg.angle_min + (i * msg.angle_increment)
-                
-    #             # Interpolated Yaw (The crucial part to stop the smearing)
-    #             yaw = orient_start[2] + fraction * (orient_end[2] - orient_start[2])
-                
-    #             # Local coords
-    #             lx = r * np.cos(angle)
-    #             ly = r * np.sin(angle)
-                
-    #             # 3. Rotate using the interpolated yaw
-    #             c, s = np.cos(yaw), np.sin(yaw)
-    #             gx = pos_start[0] + (lx * c - ly * s)
-    #             gy = pos_start[1] + (lx * s + ly * c)
-                
-    #             wall_points.append([gx, gy])
-    #         # angle += msg.angle_increment
-
-    #     # if wall_points:
-    #     #     local_points = np.array(wall_points, dtype=np.float32)
-    #     # else:
-    #     #     local_points = np.empty((0, 2), dtype=np.float32)
-
-    #     # self.wall_points = self.transform_to_global(local_points)
-
-    #     self.wall_points = np.array(wall_points, dtype=np.float32)
-
-        # if len(self.wall_points):
-            # print(f"Robot Pos: {pos_end[0]:.2f}, {pos_end[1]:.2f} | First Wall Point Global: {self.wall_points[0]}")
-
+ 
     def listener_callback(self, msg):
         ranges = np.array(msg.ranges, dtype=np.float32)
         angles = np.linspace(msg.angle_min, msg.angle_max, len(ranges))
@@ -965,17 +905,14 @@ class UGVPerception(Node):
         r_valid = ranges[valid_mask]
         a_valid = angles[valid_mask]
         
-        # 1. Compute local 2D points from polar ranges
         lx = r_valid * np.cos(a_valid)
         ly = r_valid * np.sin(a_valid)
         local_points = np.stack((lx, ly), axis=-1)
 
-        # 2. Get the robot's current pose right now (since the scan is instantaneous)
         pos = self.sim.getObjectPosition(self.robot_handle, -1)
         orient = self.sim.getObjectOrientation(self.robot_handle, -1)
         yaw = orient[2]
 
-        # 3. Rotate and translate all points at once using the current yaw
         c, s = np.cos(yaw), np.sin(yaw)
         R = np.array([[c, -s], [s, c]], dtype=np.float32)
         
@@ -984,172 +921,5 @@ class UGVPerception(Node):
 
         # if len(self.wall_points):
             # print(f"Robot Pos: {pos[0]:.2f}, {pos[1]:.2f} | First Wall Point Global: {self.wall_points[0]}")
-
-
-    def transform_to_global(self, local_points):
-        if len(local_points) == 0:
-            return np.empty((0, 2), dtype=np.float32)
-
-        # robot_pos = self.sim.getObjectPosition(self.robot_handle, -1)
-        # robot_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
-
-        cam_handle = self.sim.getObject('/PioneerP3DX/Hokuyo')
-        sensor_matrix = self.sim.getObjectMatrix(cam_handle, -1)
-
-        R_2d = np.array([
-            [sensor_matrix[0], sensor_matrix[1]],
-            [sensor_matrix[4], sensor_matrix[5]]
-        ], dtype=np.float32)
-        
-        T_2d = np.array([sensor_matrix[3], sensor_matrix[7]], dtype=np.float32)
-
-        # Vectorized transformation in pure NumPy (bypasses ZMQ serialization errors and loop overhead)
-        global_points = np.dot(local_points, R_2d.T) + T_2d
-
-        # # Flip the sign of the yaw angle if your map frame uses an inverted rotation convention
-        # yaw = -robot_orient[2] 
-
-        # c, s = np.cos(yaw), np.sin(yaw)
-        # R = np.array(((c, -s), (s, c)), dtype=np.float32)
-
-        # # Rotate local points and translate by global robot position
-        # global_points = np.dot(local_points, R.T) + np.array([robot_pos[0], robot_pos[1]], dtype=np.float32)
-        return np.array(global_points, dtype=np.float32)
-            
-
-# class VisionSensor():
-#     def __init__(self, vision_params, robot_handle, sim):
-#         # Vision range
-#         self.min_range = vision_params["MinRange"]
-#         self.max_range = vision_params["MaxRange"]
-
-#         # FoV
-#         self.fov = vision_params["FovDegrees"]
-
-#         # Camera name
-#         self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor[1]')
-#         self.robot_handle = robot_handle
-
-#     def get_lidar_point(self, sim):
-#         script_handle = sim.getScript(
-#             sim.scripttype_childscript, 
-#             self.robot_handle
-#         )
-
-#         # Then call the Lua function using that script handle
-#         result = sim.callScriptFunction(
-#             'getDenseScan', 
-#             script_handle
-#         )
-
-#         if result and len(result) > 0 and len(result[0]) > 0:
-#             flat_points = result[0]
-#             # Reshape the flat [x1, y1, x2, y2, ...] list into an (N, 2) numpy array
-#             self.wall_points = np.array(flat_points, dtype=np.float32).reshape(-1, 2)
-#         else:
-#             self.wall_points = np.empty((0, 2), dtype=np.float32)
-
-
-    # Get LiDAR point cloud from CopelliaSim
-    # def get_lidar_points(self, sim, robot_handle):
-    #     # Get raw depth matrix (1 = metres)
-    #     depth_bytes, resolution = sim.getVisionSensorDepth(self.cam_handle, 1)
-
-    #     if not depth_bytes or len(depth_bytes) == 0:
-    #         return np.empty((0, 3), dtype=np.float32)
-
-    #     width, height = resolution[0], resolution[1]
-    #     depth_map = np.frombuffer(depth_bytes, dtype=np.float32).reshape(height, width)
-
-    #     mid_row = height // 2
-    #     depth_row = depth_map[mid_row, :]
-
-    #     # Camera model
-    #     fov_rad = np.radians(self.fov)
-    #     fx = width / (2.0 * np.tan(fov_rad / 2.0))
-    #     # fy = fx
-    #     cx = width / 2.0
-    #     # cy = height / 2.0
-
-    #     valid_mask = (depth_row > 0.3) & (depth_row < (self.max_range * 0.99))
-
-    #     if not np.any(valid_mask):
-    #         self.wall_points = np.empty((0, 2), dtype=np.float32)
-    #         return
-
-    #     # Create pixel coordinate grid
-    #     u = np.arange(width)[valid_mask]
-    #     z = depth_row[valid_mask]
-
-    #     x_local = (u - cx) * z / fx
-    #     y_local = np.zeros_like(x_local)
-    #     z_local = z
-
-    #     local_pts = np.column_stack((x_local, y_local, z_local))
-
-    #     # Filter out background clipping plane and empty depth points
-    #     # valid_mask = (depth_map > 0.3) & (depth_map < (self.max_range * 0.99))
-
-    #     # z = depth_map[valid_mask]
-    #     # u_val = u[valid_mask]
-    #     # v_val = v[valid_mask]
-
-    #     # if len(z) == 0:
-    #     #     return np.empty((0, 3), dtype=np.float32)
-
-    #     # # Project 2D pixels (u, v, z) to 3D camera local frame (x, y, z)
-    #     # x = (u_val - cx) * z / fx
-    #     # y = (v_val - cy) * z / fy
-    #     # local_pts = np.column_stack((x, y, z))
-
-    #     # Transform camera local points into world coordinates
-    #     cam_matrix = np.array(sim.getObjectMatrix(self.cam_handle)).reshape(3, 4) 
-    #     R = cam_matrix[:, :3]
-    #     T = cam_matrix[:, 3]
-
-    #     world_pts_raw = np.dot(local_pts, R.T) + T
-
-    #     robot_pos = sim.getObjectPosition(robot_handle, -1)
-
-    #     # min_z_height = 0.3
-    #     # max_z_height = robot_pos[2] + 2.0
-
-    #     # height_mask = (world_pts_raw[:, 2] > min_z_height) & (world_pts_raw[:, 2] < max_z_height)
-    #     # self.world_pts = world_pts_raw[height_mask]
-
-    #     xy_distance = np.linalg.norm(world_pts_raw[:, :2] - robot_pos[:2], axis=1)
-    #     not_robot_mask = xy_distance > 0.8
-
-    #     # self.wall_points = self.extract_wall_points(not_robot_mask, robot_pos)
-    #     self.wall_points = world_pts_raw[not_robot_mask, :2]
-
-    #     if len(self.wall_points) > 0:
-    #         print(f"Captured {len(self.wall_points)} wall points! Sample point: {self.wall_points[0]}")
-
-
-    # def extract_wall_points(self, world_points, robot_pos, min_dist = 0.8, min_z=0.2, max_z=2.0):
-    #     if len(world_points) == 0:
-    #         return np.empty((0, 3), dtype=np.float32)
-
-    #     # 1. Filter out points belonging to the robot itself (too close to robot center in X-Y plane)
-    #     xy_distances = np.linalg.norm(world_points[:, :2] - robot_pos[:2], axis=1)
-    #     not_robot_mask = xy_distances > min_dist
-
-    #     # 2. Filter out floor/ceiling noise using world Z height
-    #     wall_height_mask = (world_points[:, 2] >= min_z) & (world_points[:, 2] <= max_z)
-
-    #     final_mask = not_robot_mask & wall_height_mask
-    #     filtered_points = world_points[final_mask]
-
-    #     # if len(filtered_points) > 10:
-    #     #     # Quick density check: keep points that have at least a few neighbors nearby
-    #     #     tree = cKDTree(filtered_points[:, :2])
-    #     #     # Count neighbors within a 0.3m radius
-    #     #     neighbor_counts = [len(tree.query_ball_point(pt[:2], r=0.3)) for pt in filtered_points]
-    #     #     dense_mask = np.array(neighbor_counts) > 3  # Must have at least 3 neighbors to be a "wall"
-    #     #     filtered_points = filtered_points[dense_mask]
-
-    #     return filtered_points
-    
 
 
