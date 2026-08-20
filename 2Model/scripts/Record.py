@@ -1,5 +1,6 @@
 import numpy as np
 import csv
+import pandas as pd
 
 class RecordTime():
     def record_time_elapsed(self, num_robots, time_elapsed, uav_params):
@@ -46,4 +47,21 @@ class RecordRedundancy():
             
             # 3. Append the mixed data row directly to the CSV
             writer.writerow(row)
+
+class RecordScannedGrid():
+    def save_final_grids(self, ugvs):
+        grid_data = {}
+        
+        for i, ugv in enumerate(ugvs):
+            # Flatten the 2D grid to 1D
+            flattened_grid = ugv.occupancy_grid.belief_grid.flatten()
+            grid_data[f'UGV_{i}'] = flattened_grid
+        
+        # Create DataFrame: robots as rows, grid cells as columns
+        df = pd.DataFrame.from_dict(grid_data, orient='index')
+        df.index.name = 'Robot_ID'
+        
+        # Export to Excel
+        df.to_excel("Final_Robot_Grids.xlsx")
+        print("Final occupancy grids saved to Final_Robot_Grids.xlsx")
         

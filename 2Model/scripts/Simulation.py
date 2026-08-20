@@ -4,7 +4,7 @@ import numpy as np
 import os
 import json
 import math
-from Record import RecordRedundancy, RecordTime
+from Record import RecordRedundancy, RecordTime, RecordScannedGrid
 from RobotModels.UAVModel import UAVModel
 from RobotModels.UGVModel import UGVModel
 from AreaModel import AreaModel
@@ -40,6 +40,7 @@ class Simulation():
             # self.time_elapsed = 0
             record_time = RecordTime()
             record_redundancy = RecordRedundancy()
+            record_scanned_grid = RecordScannedGrid()
 
             self.client.step()
 
@@ -64,11 +65,13 @@ class Simulation():
 
                 if self.completed:
                     break
-
-            self.sim.stopSimulation()
-
-            record_time.record_time_elapsed(self.num_ugvs, self.time_elapsed, self.UGVParams)
-            record_redundancy.record_overlap(self.area.overlap_area, self.num_ugvs, self.UGVParams)
+            # except Exception:
+            #     print(Exception)
+            # finally:
+            #     self.sim.stopSimulation()
+            #     record_time.record_time_elapsed(self.num_ugvs, self.sim.getSimulationTime(), self.UGVParams)
+            #     record_redundancy.record_overlap(self.area.overlap_area, self.num_ugvs, self.UGVParams)
+            #     record_scanned_grid.save_final_grids(self.UGVs)
         
 
     # Get simulation parameters
@@ -143,7 +146,7 @@ class Simulation():
             left_motor = None
             right_motor = None
 
-            if self.num_uavs == 1:
+            if self.num_ugvs == 1:
                 robot_handle = self.sim.getObject('/PioneerP3DX')
                 left_motor = self.sim.getObject('/PioneerP3DX/leftMotor')
                 right_motor = self.sim.getObject('/PioneerP3DX/rightMotor')
@@ -163,15 +166,43 @@ class Simulation():
 
             self.UGVs.append(ugv)
 
+    def ShareRobotData(self):
+        for ugv in self.UGVs:
+            ugv.localUGVs = []
+            for ugv2 in self.UGVs:
+                if ugv == ugv2:
+                    continue
+
+                if self.is_comms_modelled:
+                    transmission_possible = self.Is_Transmission_Possible(ugv, ugv2)
+                else:
+                    transmission_possible = True
+
+                if transmission_possible:
+                    if not ugv2 in ugv.localUGVs:
+                        ugv.localUGVs.append(ugv2)
+                    for row in range(ugv.occupancy_grid.height):
+                        for col in range(ugv.occupancy_grid.width):
+                            if ugv.occupancy_grid.grid[row, col] == 0:
+                                ugv.occupancy_grid.grid[row, col] = ugv2.occupancy_grid.grid[row, col]
+
+
+
     # Calculate if transmission is possible between two UAVs
-    def Is_Transmission_Possible(self, uav1: UAVModel, uav2: UAVModel):
+    def Is_Transmission_Possible(self, ugv1: UGVModel, ugv2: UGVModel):
         # Check params
         step = 0.1
         epsilon = 1e-9
 
         # Difference between uav1 and uav2
-        dx = uav2.x_pos - uav1.x_pos
-        dy = uav2.y_pos - uav1.y_pos
+        curr_pos_1 = self.sim.getObjectPosition(ugv1.robot_handle, -1)
+        curr_grid_pos_1 = self.area.world_to_grid(curr_pos_1[0], curr_pos_1[1])
+
+        curr_pos_2 = self.sim.getObjectPosition(ugv2.robot_handle, -1)
+        curr_grid_pos_2 = self.area.world_to_grid(curr_pos_2[0], curr_pos_2[1])
+
+        dx = curr_grid_pos_2[0] - curr_grid_pos_1[0]
+        dy = curr_grid_pos_2[1] - curr_grid_pos_1[1]
         total_dist = math.hypot(dx, dy)
 
         # Drones are at the exact same point
@@ -185,8 +216,8 @@ class Simulation():
         # Normalized direction vector per step
         step_x = (dx / total_dist) * step
         step_y = (dy / total_dist) * step
-        x_pos = uav1.x_pos
-        y_pos = uav1.y_pos
+        x_pos = curr_grid_pos_1[0]
+        y_pos = curr_grid_pos_1[1]
 
         # Moniter the amount of free space and wall space between the drones
         free_space = 0
@@ -198,8 +229,8 @@ class Simulation():
             grid_y = int(round(y_pos + epsilon))
 
             # Boundary check safeguard before array lookup
-            if 0 <= grid_y < self.area.grid.shape[0] and 0 <= grid_x < self.area.grid.shape[1]:
-                if self.area.grid[grid_y, grid_x] == 1:
+            if 0 <= grid_y < self.area.width * self.area.resolution and 0 <= grid_x < self.area.height * self.area.resolution:
+                if self.area.walls_grid[grid_y, grid_x] == 1:
                     wall_space += step
                 else:
                     free_space += step
@@ -211,7 +242,7 @@ class Simulation():
             x_pos += step_x
             y_pos += step_y
 
-        comms_params = self.UAVParams["Communications"]
+        comms_params = self.UGVParams["Communications"]
 
         # Get params used to model wifi communication
         frequency = comms_params["Frequency"]

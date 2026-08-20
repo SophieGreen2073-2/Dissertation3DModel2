@@ -412,7 +412,8 @@ class UGVModel():
                                             self.max_vision_range, 
                                             self.sensors.forward_lidar.wall_points,
                                             self.sensors.lidar_spin.wall_points,
-                                            current_grid_pos, curr_orient, area_model, self.robot_id)
+                                            current_grid_pos, curr_orient, area_model, 
+                                            self.robot_id)
 
         wall_belief = self.occupancy_grid.get_probability_grid()
 

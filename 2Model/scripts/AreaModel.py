@@ -7,7 +7,16 @@ class AreaModel():
 
         self.walls = []
         self.resolution = resolution
-        self.overlap_area = np.zeros((height * resolution, width * resolution, num_ugvs))
+
+        self.x_min, self.x_max = -width/2, width/2
+        self.y_min, self.y_max = -height/2, height/2
+        self.resolution = resolution
+
+        self.width = int((self.x_max - self.x_min)/ resolution)
+        self.height = int((self.y_max - self.y_min) / resolution)
+
+        self.walls_grid = np.zeros((self.height, self.width), dtype=np.float32)
+        self.overlap_area = np.zeros((self.height, self.width, num_ugvs))
 
         # Get parent object
         parent_name = "/Walls"
@@ -49,3 +58,25 @@ class AreaModel():
             self.walls.append(wall_info)
 
         return
+
+    # Convert world coordinates into grid belief position
+    def world_to_grid(self, wx, wy):
+        gx = np.floor((wx - self.x_min) / self.resolution).astype(int)
+        gy = np.floor((self.y_max - wy)/ self.resolution).astype(int)
+        return gx, gy
+
+    # Create grid of walls
+    def create_grid_of_walls(self):
+        for wall in self.walls:
+            g_xmin, g_ymin_idx = self.world_to_grid(wall["min_x"], wall["max_y"])
+            g_xmax, g_ymax_idx = self.world_to_grid(wall["max_x"], wall["min_y"])
+            
+            # Ensure proper ordering for grid slicing (min to max)
+            gx_start = max(0, min(g_xmin, g_xmax))
+            gx_end = min(self.width, max(g_xmin, g_xmax) + 1)
+            
+            gy_start = max(0, min(g_ymin_idx, g_ymax_idx))
+            gy_end = min(self.height, max(g_ymin_idx, g_ymax_idx) + 1)
+            
+            # Mark the wall region as occupied in the grid
+            self.walls_grid[gy_start:gy_end, gx_start:gx_end] = 1.0
