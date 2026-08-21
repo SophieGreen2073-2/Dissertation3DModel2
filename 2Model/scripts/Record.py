@@ -4,7 +4,7 @@ import pandas as pd
 
 class RecordTime():
     def record_time_elapsed(self, num_robots, time_elapsed, uav_params):
-        with open('dissertation_time_record.csv', 'a', newline='') as f:
+        with open('dissertation_time_record_utility_no_comms_DJV_1_robot.csv', 'a', newline='') as f:
             writer = csv.writer(f)
             
             # 1. Start with your base variables safely converted
@@ -26,7 +26,7 @@ class RecordTime():
 
 class RecordRedundancy():
     def record_overlap(self, overlap_area, numUAVs, uav_params):
-        with open('dissertation_redundancy_record.csv', 'a') as f:
+        with open('dissertation_redundancy_record_utility_no_comms_DJV_1_robot.csv', 'a') as f:
             writer = csv.writer(f)
             
             # 1. Start with your base variables safely converted
@@ -50,7 +50,7 @@ class RecordRedundancy():
 
 class RecordScannedGrid():
     def save_final_grids(self, ugvs, ugv_params):
-        with open('dissertation_scanned_grids_record.csv', 'a', newline='') as f:
+        with open('dissertation_scanned_grids_record_utility_no_comms_DJV_1_robot.csv', 'a', newline='') as f:
             writer = csv.writer(f)
             
             for i, ugv in enumerate(ugvs):

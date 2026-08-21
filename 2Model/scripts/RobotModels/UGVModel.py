@@ -194,7 +194,7 @@ class UGVModel():
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
                                             self.max_vision_range, 
-                                            self.sensors.lidar_wall_points,
+                                            self.sensors.forward_lidars,
                                             self.sensors.lidar_spin.wall_points,
                                             curr_grid_pos, curr_orient, area_model, self.robot_id)
 
@@ -410,7 +410,7 @@ class UGVModel():
         self.sensors.get_points(self.sim, self.robot_handle)
         self.occupancy_grid.update_belief(self.sim, self.robot_handle,
                                             self.max_vision_range, 
-                                            self.sensors.lidar_wall_points,
+                                            self.sensors.forward_lidars,
                                             self.sensors.lidar_spin.wall_points,
                                             current_grid_pos, curr_orient, area_model, 
                                             self.robot_id)
@@ -528,7 +528,7 @@ class UGVModel():
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
                                             self.max_vision_range, 
-                                            self.sensors.lidar_wall_points,
+                                            self.sensors.forward_lidars,
                                             self.sensors.lidar_spin.wall_points,
                                             current_grid_pos, curr_orient, area_model, self.robot_id)
             
@@ -762,7 +762,7 @@ class UGVModel():
     def check_frontier(self, directions, cc, cr):
         wall_belief = self.occupancy_grid.get_probability_grid()
 
-        if wall_belief[cr, cc] == 0.5:
+        if wall_belief[cr, cc] >= 0.5:
             return False
         
         for dir in directions:
@@ -869,8 +869,8 @@ class ForwardLiDAR():
 
         self.wall_points = None
 
-        self.orient = self.sim.getObjectOrientation(self.cam_handle, robot_handle)
-        self.pos = self.sim.getObjectPosition(self.cam_handle, robot_handle)
+        self.orient = sim.getObjectOrientation(self.cam_handle, robot_handle)
+        self.pos = sim.getObjectPosition(self.cam_handle, robot_handle)
 
     def get_lidar_point(self, sim):
         res, dist, detected_point, obj_handle, normal_vector = sim.checkProximitySensor(self.cam_handle, sim.handle_all)
@@ -878,6 +878,7 @@ class ForwardLiDAR():
         if res > 0:
             sensor_matrix = sim.getObjectMatrix(self.cam_handle, -1)
             self.wall_points = sim.multiplyVector(sensor_matrix, detected_point)
+            return
 
         self.wall_points = None
 
