@@ -194,7 +194,7 @@ class UGVModel():
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
                                             self.max_vision_range, 
-                                            self.sensors.forward_lidar.wall_points,
+                                            self.sensors.lidar_wall_points,
                                             self.sensors.lidar_spin.wall_points,
                                             curr_grid_pos, curr_orient, area_model, self.robot_id)
 
@@ -410,7 +410,7 @@ class UGVModel():
         self.sensors.get_points(self.sim, self.robot_handle)
         self.occupancy_grid.update_belief(self.sim, self.robot_handle,
                                             self.max_vision_range, 
-                                            self.sensors.forward_lidar.wall_points,
+                                            self.sensors.lidar_wall_points,
                                             self.sensors.lidar_spin.wall_points,
                                             current_grid_pos, curr_orient, area_model, 
                                             self.robot_id)
@@ -528,7 +528,7 @@ class UGVModel():
             self.sensors.get_points(self.sim, self.robot_handle)
             self.occupancy_grid.update_belief(self.sim, self.robot_handle,
                                             self.max_vision_range, 
-                                            self.sensors.forward_lidar.wall_points,
+                                            self.sensors.lidar_wall_points,
                                             self.sensors.lidar_spin.wall_points,
                                             current_grid_pos, curr_orient, area_model, self.robot_id)
             
@@ -637,7 +637,7 @@ class UGVModel():
         height, width = wall_belief.shape
 
         new_wall_belief = wall_belief.copy()
-        inflation_radius = 2
+        inflation_radius = 1
 
         for r in range(height):
             for c in range(width):
@@ -839,7 +839,11 @@ class Sensors():
         self.scan_frequency = sensor_params["ScanFrequency"]
 
         # Forward lidar
-        self.forward_lidar = ForwardLiDAR(sensor_params["LiDAR"], robot_handle, sim)
+        # self.lidar_wall_points = []
+        self.num_sensors = 32
+        self.forward_lidars = []
+        for i in range(self.num_sensors):
+            self.forward_lidars.append(ForwardLiDAR(sensor_params["LiDAR"], robot_handle, sim, i))
 
         self.lidar_spin = UGVPerception(robot_handle, sim)
 
@@ -848,21 +852,25 @@ class Sensors():
         rclpy.spin_once(self.lidar_spin, timeout_sec=0.0)
         
         # Get the points directly ahead of the forward lidar (accurate sensing)
-        self.forward_lidar.get_lidar_point(sim)
+        for sensor in self.forward_lidars:
+            sensor.get_lidar_point(sim)
 
         return
 
 
 class ForwardLiDAR():
-    def __init__(self, LiDAR_params, robot_handle, sim):
+    def __init__(self, LiDAR_params, robot_handle, sim, index):
         # LiDAR range
         self.min_range = LiDAR_params["MinRange"]
         self.max_range = LiDAR_params["MaxRange"]
 
         # Camera handle
-        self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor[0]')
+        self.cam_handle = sim.getObject(f'/PioneerP3DX/proximitySensor[{index}]')
 
-        self.wall_points = []
+        self.wall_points = None
+
+        self.orient = self.sim.getObjectOrientation(self.cam_handle, robot_handle)
+        self.pos = self.sim.getObjectPosition(self.cam_handle, robot_handle)
 
     def get_lidar_point(self, sim):
         res, dist, detected_point, obj_handle, normal_vector = sim.checkProximitySensor(self.cam_handle, sim.handle_all)
@@ -870,10 +878,8 @@ class ForwardLiDAR():
         if res > 0:
             sensor_matrix = sim.getObjectMatrix(self.cam_handle, -1)
             self.wall_points = sim.multiplyVector(sensor_matrix, detected_point)
-            return
 
-        self.wall_points = []
-
+        self.wall_points = None
 
 class UGVPerception(Node):
     def __init__(self, robot_handle, sim):

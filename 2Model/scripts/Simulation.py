@@ -71,7 +71,7 @@ class Simulation():
                 self.sim.stopSimulation()
                 record_time.record_time_elapsed(self.num_ugvs, self.sim.getSimulationTime(), self.UGVParams)
                 record_redundancy.record_overlap(self.area.overlap_area, self.num_ugvs, self.UGVParams)
-                record_scanned_grid.save_final_grids(self.UGVs)
+                record_scanned_grid.save_final_grids(self.UGVs, self.UGVParams)
         
 
     # Get simulation parameters

@@ -143,25 +143,36 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         self.l_occ_vision = 0.7   # Increase belief when wall is detected by 360 degree vision cams 
 
     def update_belief(self, sim, robot_handle, 
-                      vision_max_range, forward_lidar_wall_points, 
+                      vision_max_range, forward_lidars, 
                       vision_cam_wall_points, robot_pos, robot_orient, 
-                      area_model, robot_id):
+                      area_model, robot_id, lidar_max_range):
         robot_x, robot_y, robot_yaw = robot_pos[0], robot_pos[1], robot_orient[2]
         
         # robot_col, robot_row = self.world_to_grid(robot_x, robot_y)
         prob_grid = self.get_probability_grid()
+        current_update_grid = np.zeros((self.height, self.width), dtype=np.float32)
 
-        self.update_vision_cam_belief(vision_max_range, robot_x,
+        current_update_grid = self.update_lidar_belief(sim, robot_handle, forward_lidars, area_model, robot_id, current_update_grid, lidar_max_range)
+
+        current_update_grid = self.update_vision_cam_belief(vision_max_range, robot_x,
                                       robot_y, robot_yaw, sim, robot_handle, vision_cam_wall_points,
-                                      prob_grid, area_model, robot_id)
+                                      prob_grid, area_model, robot_id, current_update_grid)
 
-        self.update_lidar_belief(sim, robot_handle, forward_lidar_wall_points, area_model, robot_id)
+        current_update_grid[robot_y, robot_x] = -5 
 
-        self.belief_grid[robot_y, robot_x] = -5 
+        self.update_belief_grid(current_update_grid, robot_id, area_model)
 
         # Ensure belief stays within bounds [l_min, l_max]
         np.clip(self.belief_grid, self.l_min, self.l_max, out=self.belief_grid)
 
+
+    # Use the update grid to update the robots belief
+    def update_belief_grid(self, current_update_grid, robot_id, area_model):
+        for r, c in zip(*np.where(current_update_grid != 0)):
+            self.belief_grid[r, c] += current_update_grid[r, c]
+            area_model.occupancy_grid[r, c, robot_id] += 1
+
+    # Get points along a line in the grid
     def line_of_sight(self, x0, y0, x1, y1):
         points = []
         dx = abs(x1 - x0)
@@ -184,25 +195,46 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         return points
 
 
-    def update_lidar_belief(self, sim, robot_handle, wall_points, area_model, robot_id):
-        if len(wall_points) == 0:
-            return
-
+    def update_lidar_belief(self, sim, robot_handle, forward_lidars, area_model, robot_id, current_update_grid, max_range):
         pos = sim.getObjectPosition(robot_handle, -1)
+        orient = sim.getObjectOrientation(robot_handle, -1)
         robot_grid = self.world_to_grid(pos[0], pos[1])
-        
-        valid_wall = self.world_to_grid(wall_points[0], wall_points[1])
-        points = self.line_of_sight(robot_grid[0], robot_grid[1], valid_wall[0], valid_wall[1])
 
-        for p in points:
-            self.belief_grid[p[1], p[0]] += self.l_free
-            area_model.overlap_area[p[1], p[0], robot_id] += 1
+        for lidar in forward_lidars:
+            if lidar.wall_points:
+                valid_wall = self.world_to_grid(lidar.wall_points[0], lidar.wall_points[1])
+                points = self.line_of_sight(robot_grid[0], robot_grid[1], valid_wall[0], valid_wall[1])
 
-        self.belief_grid[valid_wall[1], valid_wall[0]] += self.l_occ_lidar
-        area_model.overlap_area[valid_wall[1], valid_wall[0], robot_id] += 1
+                for p in points:
+                    current_update_grid[p[1], p[0]] += self.l_free
+                    # area_model.overlap_area[p[1], p[0], robot_id] += 1
+
+                current_update_grid[valid_wall[1], valid_wall[0]] += self.l_occ_lidar
+                # area_model.overlap_area[valid_wall[1], valid_wall[0], robot_id] += 1
+            else:
+                sensor_world_x = pos[0] + (lidar.pos[0] * np.cos(orient[2]) - lidar.pos[1] * np.sin(orient[2]))
+                sensor_world_y = pos[1] + (lidar.pos[0] * np.sin(orient[2]) + lidar.pos[1] * np.cos(orient[2]))
+                
+                # Total absolute heading of the sensor ray
+                total_angle = orient[2] + lidar.orient[2]
+                
+                # 3. Compute the maximum range endpoint in world coordinates
+                end_x = sensor_world_x + max_range * np.cos(total_angle)
+                end_y = sensor_world_y + max_range * np.sin(total_angle)
+                
+                valid_end = self.world_to_grid(end_x, end_y)
+                
+                # 4. Trace line of sight across the entire range as free space
+                points = self.line_of_sight(robot_grid[0], robot_grid[1], valid_end[0], valid_end[1])
+
+                for p in points:
+                    current_update_grid[p[1], p[0]] += self.l_free
+                    # area_model.overlap_area[p[1], p[0], robot_id] += 1
+
+        return current_update_grid
 
 
-    def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid, area_model, robot_id):
+    def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid, area_model, robot_id, current_update_grid):
         # Define FOV half-angle
         fov_deg = 360
         half_fov = math.radians(fov_deg / 2.0)
@@ -231,15 +263,20 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
                     break
 
                 # CHeck if location is a wall, if yes move to next ray
+                if not current_update_grid[r, c] == 0:
+                    continue
+
                 if (r, c) in valid_walls:
-                    self.belief_grid[r, c] += self.l_occ_vision
-                    area_model.overlap_area[r, c, robot_id] += 1
+                    current_update_grid[r, c] += self.l_occ_vision
+                    # area_model.overlap_area[r, c, robot_id] += 1
                     break
                 else:
                     if self.belief_grid[r, c] <= 2.5:
-                        self.belief_grid[r, c] += self.l_free
-                        area_model.overlap_area[r, c] += 1
+                        current_update_grid[r, c] += self.l_free
+                        # area_model.overlap_area[r, c] += 1
 
                 dist += step_size
 
             curr_angle += angular_resolution
+
+        return current_update_grid
