@@ -73,3 +73,53 @@ class RecordScannedGrid():
                 
                 # 4. Write this robot's complete row to the CSV
                 writer.writerow(row)
+
+    def save_path_taken(self, ugvs, ugv_params):
+        with open('dissertation_path_taken_record_utility_no_comms_DJV_1_robot.csv', 'a', newline='') as f:
+            writer = csv.writer(f)
+            
+            for i, ugv in enumerate(ugvs):
+                # 1. Start the row with the robot's identifier/index
+                row = [int(i)]
+                
+                # 2. Append the flattened grid values
+                flattened_grid = ugv.path_taken.flatten()
+                for val in flattened_grid:
+                    row.append(f"{float(val):.6f}")
+                
+                # 3. Extract and append parameters matching the other record classes
+                for param in ugv_params.values():
+                    if isinstance(param, float):
+                        row.append(f"{param:.6f}")
+                    elif isinstance(param, (int, bool)):
+                        row.append(int(param))
+                    else:
+                        row.append(str(param))
+                
+                # 4. Write this robot's complete row to the CSV
+                writer.writerow(row)
+
+    def save_paths_planned(self, ugvs, ugv_params):
+        with open('dissertation_paths_planned_record_utility_no_comms_DJV_1_robot.csv', 'a', newline='') as f:
+            writer = csv.writer(f)
+            
+            for i, ugv in enumerate(ugvs):
+                # 1. Start the row with the robot's identifier/index
+                row = [int(i)]
+                
+                # 2. Append the flattened grid values
+                flattened_grid = ugv.paths_planned.flatten()
+                for val in flattened_grid:
+                    row.append(f"{float(val):.6f}")
+                
+                # 3. Extract and append parameters matching the other record classes
+                for param in ugv_params.values():
+                    if isinstance(param, float):
+                        row.append(f"{param:.6f}")
+                    elif isinstance(param, (int, bool)):
+                        row.append(int(param))
+                    else:
+                        row.append(str(param))
+                
+                # 4. Write this robot's complete row to the CSV
+                writer.writerow(row)

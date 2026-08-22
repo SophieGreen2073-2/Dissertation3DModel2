@@ -202,13 +202,18 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
 
         for lidar in forward_lidars:
             if lidar.wall_points:
-                valid_wall = self.world_to_grid(lidar.wall_points[0], lidar.wall_points[1])
-                points = self.line_of_sight(robot_grid[0], robot_grid[1], valid_wall[0], valid_wall[1])
+                raw_col, raw_row = self.world_to_grid(lidar.wall_points[0], lidar.wall_points[1])
+
+                wall_c = max(0, min(raw_col, self.width - 1))
+                wall_r = max(0, min(raw_row, self.height - 1))
+
+                points = self.line_of_sight(robot_grid[0], robot_grid[1], wall_c, wall_r)
 
                 for p in points:
-                    current_update_grid[p[1], p[0]] += self.l_free
+                    if 0 <= p[0] < self.width and 0 <= p[1] < self.height:
+                        current_update_grid[p[1], p[0]] += self.l_free
 
-                current_update_grid[valid_wall[1], valid_wall[0]] += self.l_occ_lidar
+                current_update_grid[wall_r, wall_c] += self.l_occ_lidar
             else:
                 matrix = sim.getObjectMatrix(lidar.cam_handle, -1)
                 
@@ -232,47 +237,75 @@ class UGVOccupancyGrid(OccupancyBeliefGrid):
         return current_update_grid
 
 
+    # def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid, area_model, robot_id, current_update_grid):
+    #     # Define FOV half-angle
+    #     fov_deg = 360
+    #     half_fov = math.radians(fov_deg / 2.0)
+    #     angle_start = yaw - half_fov
+    #     angle_end = yaw + half_fov
+    #     curr_angle = angle_start
+
+    #     x, y = self.grid_to_world(gx, gy)
+
+    #     valid_walls = self.get_wall_points(wall_points)
+
+    #     angular_resolution = math.radians(1.0)
+    #     step_size = self.resolution * 0.5
+
+    #     # Loop through rays around the robot corresponding to max_range
+    #     while curr_angle <= angle_end:
+    #         dist = step_size
+    #         while dist <= max_range:
+    #             # Convert ray point back to world coordinates
+    #             wx = x + dist * math.cos(curr_angle)
+    #             wy = y + dist * math.sin(curr_angle)
+    #             c, r = self.world_to_grid(wx, wy)
+                
+    #             # Check grid boundary bounds
+    #             if not (0 <= c < self.width and 0 <= r < self.height):
+    #                 break
+
+    #             # 1. Stop ray immediately if a wall is detected here
+    #             if (r, c) in valid_walls:
+    #                 if current_update_grid[r, c] == 0:
+    #                     current_update_grid[r, c] += self.l_occ_vision
+    #                 break  # Stop ray tracing further along this angle
+
+    #             # 2. Only apply free space update if the proximity sensor hasn't already modified this cell
+    #             if current_update_grid[r, c] == 0:
+    #                 if self.belief_grid[r, c] <= 2.5:
+    #                     current_update_grid[r, c] += self.l_free
+
+    #             dist += step_size
+
+    #         curr_angle += angular_resolution
+
+    #     return current_update_grid
+
     def update_vision_cam_belief(self, max_range, gx, gy, yaw, sim, robot_handle, wall_points, prob_grid, area_model, robot_id, current_update_grid):
-        # Define FOV half-angle
-        fov_deg = 360
-        half_fov = math.radians(fov_deg / 2.0)
-        angle_start = yaw - half_fov
-        angle_end = yaw + half_fov
-        curr_angle = angle_start
-
-        x, y = self.grid_to_world(gx, gy)
-
+        robot_grid = (gx, gy)
         valid_walls = self.get_wall_points(wall_points)
 
-        angular_resolution = math.radians(1.0)
-        step_size = self.resolution * 0.5
+        for (r, c) in valid_walls:
+            # Check if the wall point is within max_range of the robot
+            dist_sq = (c - robot_grid[0])**2 + (r - robot_grid[1])**2
+            if dist_sq > (max_range / self.resolution)**2:
+                continue
 
-        # Loop through rays around the robot corresponding to max_range
-        while curr_angle <= angle_end:
-            dist = step_size
-            while dist <= max_range:
-                # Convert ray point back to world coordinates
-                wx = x + dist * math.cos(curr_angle)
-                wy = y + dist * math.sin(curr_angle)
-                c, r = self.world_to_grid(wx, wy)
-                
-                # Check grid boundary bounds
-                if not (0 <= c < self.width and 0 <= r < self.height):
-                    break
+            # Trace line of sight from robot to the measured wall point
+            points = self.line_of_sight(robot_grid[0], robot_grid[1], c, r)
 
-                # 1. Stop ray immediately if a wall is detected here
-                if (r, c) in valid_walls:
-                    if current_update_grid[r, c] == 0:
-                        current_update_grid[r, c] += self.l_occ_vision
-                    break  # Stop ray tracing further along this angle
+            # 1. Fill intermediate gap points as free space, strictly prioritizing proximity sensors
+            for p in points[:-1]:  # Exclude the final wall point
+                if 0 <= p[0] < self.width and 0 <= p[1] < self.height:
+                    # Only update if the proximity sensor hasn't already modified this cell
+                    if current_update_grid[p[1], p[0]] == 0:
+                        if self.belief_grid[p[1], p[0]] <= 2.5:
+                            current_update_grid[p[1], p[0]] += self.l_free
 
-                # 2. Only apply free space update if the proximity sensor hasn't already modified this cell
+            # 2. Mark the actual wall point as occupied, respecting proximity sensor priority
+            if 0 <= c < self.width and 0 <= r < self.height:
                 if current_update_grid[r, c] == 0:
-                    if self.belief_grid[r, c] <= 2.5:
-                        current_update_grid[r, c] += self.l_free
-
-                dist += step_size
-
-            curr_angle += angular_resolution
+                    current_update_grid[r, c] += self.l_occ_vision
 
         return current_update_grid

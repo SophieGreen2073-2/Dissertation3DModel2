@@ -56,7 +56,6 @@ class Simulation():
                     self.sim_time = self.sim.getSimulationTime()
 
                     for ugv in self.UGVs:
-                        # uav.scan()
                         if not ugv.steps_queue:
                             ugv.yamauchi_move_utility_function(self.area)
                         else:
@@ -64,14 +63,18 @@ class Simulation():
                         self.completed &= ugv.completed
 
                     if self.completed:
+                        print("Sim completed")
                         break
             except Exception:
                 print(Exception)
+                print("Error")
             finally:
                 self.sim.stopSimulation()
                 record_time.record_time_elapsed(self.num_ugvs, self.sim.getSimulationTime(), self.UGVParams)
                 record_redundancy.record_overlap(self.area.overlap_area, self.num_ugvs, self.UGVParams)
                 record_scanned_grid.save_final_grids(self.UGVs, self.UGVParams)
+                record_scanned_grid.save_path_taken(self.UGVS, self.UGVParams)
+                record_scanned_grid.save_paths_planned(self.UGVs, self.UGVParams)
         
 
     # Get simulation parameters

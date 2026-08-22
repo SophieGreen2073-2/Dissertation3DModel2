@@ -43,6 +43,7 @@ class UGVModel():
         self.prev_target = None
         self.locked_sign = 1
         self.failed_frontiers = set()
+        self.previous_loc = None
 
         # Battery
         self.battery = Battery(battery_params)
@@ -73,6 +74,8 @@ class UGVModel():
         # Step count
         self.step_count = 0
         self.dt = self.sim.getSimulationTimeStep()
+        self.path_taken = []
+        self.paths_planned = []
 
 
     # Check if target should be moved to next target 
@@ -106,6 +109,11 @@ class UGVModel():
         curr_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         curr_orient = self.sim.getObjectOrientation(self.robot_handle, -1)
         curr_grid_pos = self.occupancy_grid.world_to_grid(curr_pos[0], curr_pos[1])
+
+        # Log the path taken by the robot
+        if curr_grid_pos != self.previous_loc:
+            self.path_taken.append(curr_grid_pos)
+            self.previous_loc = curr_grid_pos
 
         wall_belief = self.occupancy_grid.get_probability_grid()
 
@@ -628,6 +636,12 @@ class UGVModel():
                 path.appendleft(current)
 
             current = preceeding_nodes[current]
+
+        # Log the paths that have been planned
+        if is_find_destination:
+            self.paths_planned.append(self.steps_queue)
+        else:
+            self.paths_planned.append(path)
 
         return path
 
